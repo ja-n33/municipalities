@@ -206,7 +206,7 @@ nt_data_uifw <- list()
 
 itemcodes <- c("fruitless", "irregular", "unauthorised")
 
-for (yr in (2015:2025)){
+for (yr in (2018:2025)){
         for (item in itemcodes){
 
                         year_df <- fetch_data_uifw(year = yr, itemcode = item)
@@ -221,9 +221,9 @@ df_raw <- c()
 
 for (item in itemcodes){
 
-        df_temp <- bind_rows(nt_data[[item]])
+        df_temp <- bind_rows(nt_data_uifw[[item]])
 
-        df_raw <- rbind(df_raw, df_temp %>% dplyr::select(-`_count`))
+        df_raw <- rbind(df_raw, df_temp) # %>% dplyr::select(-`_count`))
 }
 
 df_uifw <- df_raw %>%
@@ -293,7 +293,7 @@ configs <- list(
 
 nt_data_exp <- list()
 
-for (yr in (2015:2025)){
+for (yr in (2018:2025)){
         for (config in names(configs)){
                 cfg <- configs[[config]]
 
@@ -387,15 +387,16 @@ rm(capital_df, capital_full, incexp_full)
 
 ####################################################################################################################################################################################
  
-df_uifw <- df_uifw %>%
+uifw_plot_wide <- df_uifw %>%
         dplyr::group_by(period) %>%
         dplyr::summarise(fruitless = sum(fruitless, na.rm = TRUE),
                         irregular = sum(irregular, na.rm = TRUE), 
                         unauthorised = sum(unauthorised, na.rm = TRUE),
                         total_exp = sum(total_exp, na.rm = TRUE)) %>%
-        dplyr::mutate(pct = ((fruitless + irregular + unauthorised) / total_exp) * 100) 
+        dplyr::mutate(pct = ((fruitless + irregular + unauthorised) / total_exp) * 100) %>%
+        filter(period > 2017)
 
-uifw_plot <- df_uifw %>%
+uifw_plot_long <- uifw_plot_wide %>%
         tidyr::pivot_longer(cols = c("fruitless", "irregular", "unauthorised", "pct"), 
                         names_to = "category", 
                         values_to = "value") %>%
@@ -406,36 +407,45 @@ uifw_plot <- df_uifw %>%
         pct = "Percentage of Total Expenditure")) %>%
         dplyr::select(-category)
 
-print(max(df_uifw[c("fruitless", "irregular", "unauthorised")], na.rm = TRUE))
-print(max(df_uifw["pct"], na.rm = TRUE))
-
-axis_fact <- max(df_uifw[c("fruitless", "irregular", "unauthorised")], na.rm = TRUE)  / max(df_uifw["pct"], na.rm = TRUE)
+axis_fact <- max(uifw_plot_wide[c("fruitless", "irregular", "unauthorised")], na.rm = TRUE)  / 8
 print(axis_fact)
 
-if (TRUE) {
-        area_plot <- ggplot(data = uifw_plot, aes(x = as.numeric(period), y = value, fill = category_label)) +
-                scale_linetype_manual(values = c("Percentage of Total Expenditure" = "solid")) +
-                scale_colour_manual(values = c("Percentage of Total Expenditure" = "#C9A66B")) +
-                geom_area(data = uifw_plot %>% dplyr::filter(!(category_label == "Percentage of Total Expenditure")),
-                        linewidth = 1, 
-                        aes(fill = category_label)) +
-                 geom_line(data = uifw_plot %>% dplyr::filter(category_label == "Percentage of Total Expenditure"),
-                        linewidth = 1, 
-                        aes(y = value * axis_fact, colour = category_label, linetype = category_label), 
-                        show.legend = FALSE) +
-                scale_fill_manual(values = c("Unauthorised" = "#2E4B3C",
-                                                "Irregular" = "#A3B86C",
-                                                "Fruitless & Wasteful" = "#5C8A5A")) +
-                scale_y_continuous(name = "R million", 
-                        breaks = scales::breaks_width(1000000),
-                        sec.axis = sec_axis(~. / axis_fact, name = "Percent of Total Expenditure")) +
-                labs(title    = "Infrastructure Spending by Metro, 2023 - 2025",
-                x        = "Year",
-                caption = "Sources: National Treasury") +
-                guides(fill = guide_legend(title = NULL, order = 1))+
-                substack_theme
+area_plot <- ggplot(data = uifw_plot_long, aes(x = as.numeric(period), y = value)) + 
+        geom_area(data = uifw_plot_long %>% dplyr::filter(!(category_label == "Percentage of Total Expenditure")),
+                linewidth = 4, 
+                aes(fill = category_label)) +
+        geom_line(data = uifw_plot_long %>% dplyr::filter(category_label == "Percentage of Total Expenditure"),
+                aes(y = value * axis_fact),
+                colour = "#F7F5EF",
+                linewidth = 3.2, 
+                show.legend = FALSE
+                ) +
+        geom_line(data = uifw_plot_long %>% dplyr::filter(category_label == "Percentage of Total Expenditure"),
+                aes(y = value * axis_fact, colour = category_label, linetype = category_label),
+                linewidth = 1,
+                show.legend = FALSE) +
+        scale_fill_manual(values = c("Unauthorised" = "#2E4B3C",
+                                        "Irregular" = "#A3B86C",
+                                        "Fruitless & Wasteful" = "#5C8A5A")) +
+        scale_y_continuous(name = "R billion", 
+                breaks = scales::breaks_pretty(n = 6),
+                minor_breaks = scales::breaks_pretty(n = 12),
+                labels  = function(x) ifelse(x == 0, "", scales::label_number(scale = 1e-9, big.mark = ",")(x)), 
+                sec.axis = sec_axis(~. / axis_fact, name = "Percentage of Total Expenditure"), 
+                expand = expansion(mult = c(0.001, 0.05))) +
+        scale_x_continuous(name = "Financial Year", 
+                breaks =  c(2018:2025),
+                labels = function(x) paste0(x-1, "/", stringr::str_sub(x, start = 3, end = 4)), 
+                expand = expansion(mult = c(0, 0))) + 
+        scale_linetype_manual(values = c("Percentage of Total Expenditure" = "solid")) +
+        scale_colour_manual(values = c("Percentage of Total Expenditure" = "#C9A66B")) +
+        labs(title    = "Unauthorised, Irregular, Fruitless & Wasteful Spending\nby Municipalities, 2018 - 2025",
+        x        = "Financial Year",
+        caption = "Sources: National Treasury") +
+        guides(fill = guide_legend(title = NULL, order = 1)) +
+        substack_theme
 
-}
+
 area_plot
-
+range(uifw_plot$value[uifw_plot$category_label != "Percentage of Total Expenditure"])
 uifw_plot
