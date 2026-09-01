@@ -11,7 +11,7 @@ ifelse(dir.exists(file.path(output_dir)), print("Path Exists"),
 
 ####################################################################################################################################################################################
 
-census_zip <- here::here("infrastructure", "census_sample.zip")
+census_zip <- here::here("census_sample.zip")
 
 census_dir <- here::here("data", "census_sample")
 
