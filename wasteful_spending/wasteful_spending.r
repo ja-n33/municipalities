@@ -160,6 +160,16 @@ drilldown_incexp <- paste(
   sep = "|"
 )
 
+drilldown_debtors <- paste(
+  "amount_type.label", "amount_type.code",
+  "customer_group.code", 
+  "financial_period.period",
+  "financial_year_end.year",
+  "item.label", "item.code",
+  "demarcation.label", "demarcation.code",
+  sep = "|"
+)
+
 fetch_data_uifw <- function(year, 
                         amount_type = "AUDA", 
                         url = "https://municipaldata.treasury.gov.za/api/cubes/uifwexp/aggregate", 
@@ -230,6 +240,87 @@ df_uifw <- df_raw %>%
         tidyr::pivot_wider(id_cols = c(financial_year_end.year, demarcation.code), names_from = item.code, values_from = amount.sum) %>%
         dplyr::rename(period = financial_year_end.year)
 
+
+fetch_data_debtors <- function(year, 
+                        url = "https://municipaldata.treasury.gov.za/api/cubes/aged_debtor_v2/aggregate", 
+                        drilldown = drilldown_debtors,
+                        pagesize = 5000, 
+                        page = 1, 
+                        uifw_code = "1820", 
+                        amount_type = "AUDA",
+                        aggregate = "total_amount.sum"){
+
+  base_url <- url
+
+  
+  cut <- sprintf('amount_type.code:"%s"|financial_year_end.year:%d|item.code:"%s"|period_length.length:%s', amount_type, year, uifw_code, "year")
+
+  page <- 1 
+
+  all_pages <- list()
+
+  repeat{
+        resp <- GET(base_url, query = list(
+        drilldown = drilldown,
+        cut = cut, 
+        aggregates = aggregate,
+        page = page, 
+        pagesize = pagesize, 
+        format = "csv"))
+
+        df_temp <- readr::read_csv(content(resp, "text", encoding = "UTF-8"), 
+                                col_types = readr::cols(item.code = readr::col_character()),
+                                show_col_types = FALSE)
+        if(nrow(df_temp) == 0) break 
+
+        all_pages[[page]] <- df_temp
+
+        if (nrow(df_temp) < pagesize) break
+        page <- page + 1
+        Sys.sleep(0.5)  
+        
+        }
+
+        bind_rows(all_pages)
+
+}
+
+nt_data_debtor <- list()
+
+for (yr in (2018:2025)){
+        if (yr >= 2019){
+                aggs <- "total_amount.sum|l30_amount.sum|l60_amount.sum|l90_amount.sum|l120_amount.sum|l150_amount.sum|l180_amount.sum|g1_amount.sum"
+                debtor_url <- "https://municipaldata.treasury.gov.za/api/cubes/aged_debtor_v2/aggregate"
+
+                } else {
+                aggs <- "total_amount.sum"
+                debtor_url <- "https://municipaldata.treasury.gov.za/api/cubes/aged_debtor/aggregate"
+
+                }
+
+                year_df <- fetch_data_debtors(year = yr, url = debtor_url, aggregate = aggs)
+
+                nt_data_debtor[[as.character(yr)]] <- year_df
+
+                message(paste0(yr, " completed"))
+                }
+}
+
+debt <- bind_rows(nt_data_debtor)
+
+debt <- debt %>%
+        dplyr::select(dplyr::any_of(c("customer_group.code", "financial_period.period", "item.code", "demarcation.code", "total_amount.sum")),
+                        dplyr::matches("^l"))
+
+model <- httr::GET("https://municipaldata.treasury.gov.za/api/cubes/aged_debtor_v2/model") %>%
+  httr::content("text", encoding = "UTF-8") %>%
+  jsonlite::fromJSON()
+
+print(names(model))
+
+model$model$
+
+recovery <- pivo
 fetch_data_exp <- function(year, 
                         amount_type = "AUDA", 
                         url = "https://municipaldata.treasury.gov.za/api/cubes/capital_v2/aggregate", 
@@ -267,42 +358,6 @@ fetch_data_exp <- function(year,
         Sys.sleep(0.5)  
         
         }
-
-        bind_rows(all_pages)
-
-}
-
-configs <- list(
-        capital = list(
-                url = "https://municipaldata.treasury.gov.za/api/cubes/capital_v2/aggregate",
-                drilldown = drilldown_capital, 
-                string_name = "capital",
-                selection = c("amount_type.code", "financial_period.period", "capital_type.code", "item.code", "demarcation.code", "amount.sum"),
-                df_name = "capital_years"
-        ),
-        incexp = list(
-                url = "https://municipaldata.treasury.gov.za/api/cubes/incexp_v2/aggregate",
-                drilldown = drilldown_incexp,
-                string_name = "incexp",
-                selection = c("amount_type.code", "financial_period.period", "item.code", "demarcation.code", "amount.sum"),
-                df_name = "incexp_years"
-
-        )
-        )
-
-
-nt_data_exp <- list()
-
-for (yr in (2018:2025)){
-        for (config in names(configs)){
-                cfg <- configs[[config]]
-
-                        year_df <- fetch_data_exp(year = yr, url = cfg$url, drilldown = cfg$drilldown)
-
-                        nt_data_exp[[config]][[as.character(yr)]] <- year_df
-
-                message(paste0(config, ", ", yr))
-                }
         }
 
 
@@ -413,6 +468,7 @@ print(axis_fact)
 area_plot <- ggplot(data = uifw_plot_long, aes(x = as.numeric(period), y = value)) + 
         geom_area(data = uifw_plot_long %>% dplyr::filter(!(category_label == "Percentage of Total Expenditure")),
                 linewidth = 4, 
+                outline.type = "full",
                 aes(fill = category_label)) +
         geom_line(data = uifw_plot_long %>% dplyr::filter(category_label == "Percentage of Total Expenditure"),
                 aes(y = value * axis_fact),
@@ -431,7 +487,10 @@ area_plot <- ggplot(data = uifw_plot_long, aes(x = as.numeric(period), y = value
                 breaks = scales::breaks_pretty(n = 6),
                 minor_breaks = scales::breaks_pretty(n = 12),
                 labels  = function(x) ifelse(x == 0, "", scales::label_number(scale = 1e-9, big.mark = ",")(x)), 
-                sec.axis = sec_axis(~. / axis_fact, name = "Percentage of Total Expenditure"), 
+                sec.axis = sec_axis(~. / axis_fact, 
+                        name = "Percentage of Total Expenditure", 
+                        breaks = scales::breaks_pretty(n = 6), 
+                        labels  = function(x) ifelse(x == 0, "", x)), 
                 expand = expansion(mult = c(0.001, 0.05))) +
         scale_x_continuous(name = "Financial Year", 
                 breaks =  c(2018:2025),
@@ -439,13 +498,10 @@ area_plot <- ggplot(data = uifw_plot_long, aes(x = as.numeric(period), y = value
                 expand = expansion(mult = c(0, 0))) + 
         scale_linetype_manual(values = c("Percentage of Total Expenditure" = "solid")) +
         scale_colour_manual(values = c("Percentage of Total Expenditure" = "#C9A66B")) +
-        labs(title    = "Unauthorised, Irregular, Fruitless & Wasteful Spending\nby Municipalities, 2018 - 2025",
+        labs(title    = "Unauthorised, Irregular, Fruitless & Wasteful Spending\namong Municipalities, 2018 - 2025",
         x        = "Financial Year",
         caption = "Sources: National Treasury") +
         guides(fill = guide_legend(title = NULL, order = 1)) +
         substack_theme
-
-
 area_plot
-range(uifw_plot$value[uifw_plot$category_label != "Percentage of Total Expenditure"])
-uifw_plot
+## WHAT TO DO ABOUT THE MUNICIPALITIES WHO SAW FUNDING WITHHELD?
