@@ -1,4 +1,4 @@
-pacman::p_load(dplyr, httr, jsonlite, ggplot2, sf, leaflet, scales)
+pacman::p_load(dplyr, httr, jsonlite, ggplot2, sf, leaflet, scales, cowplot, magick, patchwork)
 
 output_dir <- here::here("wasteful_spending", "output")
 
@@ -7,19 +7,23 @@ ifelse(dir.exists(file.path(output_dir)), print("Path Exists"),
 
 substack_theme <- theme_minimal(base_size = 12) +
   theme(
-    plot.background   = element_rect(fill = "#F7F5EF", colour = NA),
+    plot.background   = element_rect(fill = "#EDE8DA", colour = NA),
     panel.background  = element_rect(fill = "#EDE8DA", colour = NA),
     panel.grid.major  = element_line(colour = "#DCE0C8", linewidth = 0.4),
     panel.grid.minor  = element_blank(),
-    axis.text         = element_text(colour = "#1F2A24"),
+    panel.border = element_rect(colour = "#DCE0C8", fill = NA, linewidth = 0.6),
+    axis.title.x = element_text(colour = "#1F2A24", margin = margin(t = 8), size = rel(0.9)),
+    axis.title.y = element_text(colour = "#1F2A24", margin = margin(r = 8), size = rel(0.9)),
+    axis.text    = element_text(colour = "#5C6B5A", size = rel(0.85)),
     axis.title        = element_text(colour = "#1F2A24"),
-    plot.title        = element_text(colour = "#1F2A24", face = "bold"),
-    plot.caption      = element_text(colour = "#7A8A6F", size = 9),
+    plot.title        = element_text(colour = "#1F2A24", face = "bold", size = rel(1.15), margin = margin(b = 4)),
+    plot.caption      = element_text(colour = "#7A8A6F", size = 9, hjust = 0, margin = margin(t = 8)),
+    plot.caption.position = "plot", 
     legend.position   = "bottom",
     legend.title      = element_blank(),
     legend.text       = element_text(colour = "#1F2A24"),
-    legend.background = element_rect(fill = "#F7F5EF", colour = NA),
-    legend.key        = element_rect(fill = "#F7F5EF", colour = NA)
+    legend.background = element_rect(fill = "#EDE8DA", colour = NA),
+    legend.key        = element_rect(fill = "#EDE8DA", colour = NA),
   )
 
 ####################################################################################################################################################################################
@@ -134,6 +138,10 @@ rm(hh_wgt, hh_sz, hh_df)
 
 ####################################################################################################################################################################################
 if (TRUE){
+
+#### 
+##Create Drilldowns
+####
 drilldown_uifw <- paste(
   "financial_year_end.year",
   "item.label", "item.code",
@@ -169,6 +177,10 @@ drilldown_debtors <- paste(
   "demarcation.label", "demarcation.code",
   sep = "|"
 )
+
+####
+##UIFW
+####
 
 fetch_data_uifw <- function(year, 
                         amount_type = "AUDA", 
@@ -241,6 +253,10 @@ df_uifw <- df_raw %>%
         dplyr::rename(period = financial_year_end.year)
 
 
+####
+##Debtor data 
+####
+
 fetch_data_debtors <- function(year, 
                         url = "https://municipaldata.treasury.gov.za/api/cubes/aged_debtor_v2/aggregate", 
                         drilldown = drilldown_debtors,
@@ -289,11 +305,11 @@ nt_data_debtor <- list()
 
 for (yr in (2018:2025)){
         if (yr >= 2019){
-                aggs <- "total_amount.sum|l30_amount.sum|l60_amount.sum|l90_amount.sum|l120_amount.sum|l150_amount.sum|l180_amount.sum|g1_amount.sum"
+                aggs <- "total_amount.sum|badi_amount.sum|bad_amount.sum|l30_amount.sum|l60_amount.sum|l90_amount.sum|l120_amount.sum|l150_amount.sum|l180_amount.sum|g1_amount.sum|l1_amount.sum"
                 debtor_url <- "https://municipaldata.treasury.gov.za/api/cubes/aged_debtor_v2/aggregate"
 
                 } else {
-                aggs <- "total_amount.sum"
+                aggs <- "total_amount.sum|badi_amount.sum"
                 debtor_url <- "https://municipaldata.treasury.gov.za/api/cubes/aged_debtor/aggregate"
 
                 }
@@ -304,23 +320,23 @@ for (yr in (2018:2025)){
 
                 message(paste0(yr, " completed"))
                 }
-}
+
 
 debt <- bind_rows(nt_data_debtor)
 
-debt <- debt %>%
-        dplyr::select(dplyr::any_of(c("customer_group.code", "financial_period.period", "item.code", "demarcation.code", "total_amount.sum")),
-                        dplyr::matches("^l"))
+debt_merge <- debt %>%
+        dplyr::select(dplyr::any_of(c("customer_group.code", "financial_period.period", "item.code", "demarcation.code", "total_amount.sum", "badi_amount.sum", "bad_amount.sum", "g1_amount.sum")),
+                        dplyr::matches("^l")) %>%
+        dplyr::rename(period = financial_period.period) %>%
+        dplyr::group_by(, demarcation.code, period) %>%
+        dplyr::summarise(
+                        dplyr::across(c(dplyr::any_of(c("total_amount.sum", "badi_amount.sum", "bad_amount.sum", "g1_amount.sum")), dplyr::matches("^l")),
+                         ~sum(.x, na.rm = TRUE))) %>%
+        dplyr::mutate(across(c("g1_amount.sum", dplyr::matches("^l")), ~.x / total_amount.sum * 100, .names = "{stringr::str_remove(.col, 'amount.sum')}pct"))
+####
+##Total Expenditure 
+####
 
-model <- httr::GET("https://municipaldata.treasury.gov.za/api/cubes/aged_debtor_v2/model") %>%
-  httr::content("text", encoding = "UTF-8") %>%
-  jsonlite::fromJSON()
-
-print(names(model))
-
-model$model$
-
-recovery <- pivo
 fetch_data_exp <- function(year, 
                         amount_type = "AUDA", 
                         url = "https://municipaldata.treasury.gov.za/api/cubes/capital_v2/aggregate", 
@@ -358,8 +374,48 @@ fetch_data_exp <- function(year,
         Sys.sleep(0.5)  
         
         }
+        bind_rows(all_pages)   # <- add this line back
+
         }
 
+
+
+configs <- list(
+        capital = list(
+                url = "https://municipaldata.treasury.gov.za/api/cubes/capital_v2/aggregate",
+                drilldown = drilldown_capital, 
+                string_name = "capital",
+                selection = c("amount_type.code", "financial_period.period", "capital_type.code", "item.code", "demarcation.code", "amount.sum"),
+                df_name = "capital_years"
+        ),
+        incexp = list(
+                url = "https://municipaldata.treasury.gov.za/api/cubes/incexp_v2/aggregate",
+                drilldown = drilldown_incexp,
+                string_name = "incexp",
+                selection = c("amount_type.code", "financial_period.period", "item.code", "demarcation.code", "amount.sum"),
+                df_name = "incexp_years"
+
+        )
+        )
+
+
+nt_data_exp <- list()
+
+for (yr in (2018:2025)){
+        for (config in names(configs)){
+                cfg <- configs[[config]]
+
+                        year_df <- fetch_data_exp(year = yr, url = cfg$url, drilldown = cfg$drilldown)
+
+                        nt_data_exp[[config]][[as.character(yr)]] <- year_df
+
+                message(paste0(config, ", ", yr))
+                }
+        }
+
+
+sapply(configs, function(cfg) cfg$string_name)
+names(configs)
 
 wide_list <- list()
 
@@ -367,7 +423,7 @@ for (config in names(configs)){
                 cfg <- configs[[config]]
 
                 df_raw_exp <- bind_rows(nt_data_exp[[cfg$string_name]]) %>%
-                         dplyr::select(all_of(cfg$selection)) 
+                         dplyr::select(any_of(cfg$selection))
 
                 if (config == "capital"){
                         df_wide <- df_raw_exp %>%
@@ -430,11 +486,19 @@ capital_df <- capital_full %>%
         dplyr::group_by(period, demarcation.code) %>%
         dplyr::summarise(total_exp = sum(total_exp))
 
-df_uifw <- left_join(left_join(df_uifw, munic_list, by = "demarcation.code"), capital_df, by = c("period", "demarcation.code")) %>%
-        dplyr::filter(stringr::str_detect(demarcation.code, "DC") == FALSE)
-rm(capital_df, capital_full, incexp_full)
-}
+####
+##Bind four dataframes
+####
 
+df_uifw <- left_join(left_join(left_join(df_uifw, munic_list, by = "demarcation.code"), capital_df, by = c("period", "demarcation.code")), debt_merge, by = c("demarcation.code", "period")) %>%
+        dplyr::filter(stringr::str_detect(demarcation.code, "DC") == FALSE) %>%
+        dplyr::mutate(total_uifw = fruitless + irregular + unauthorised, 
+                pct = (total_uifw / total_exp) * 100) 
+
+rm(capital_df, capital_full, incexp_full, nt_data_debtor)
+
+##Keep debt df for later use
+}
 
 ####################################################################################################################################################################################
 
@@ -442,13 +506,16 @@ rm(capital_df, capital_full, incexp_full)
 
 ####################################################################################################################################################################################
  
+####
+##Area plot
+####
+
+
 uifw_plot_wide <- df_uifw %>%
         dplyr::group_by(period) %>%
-        dplyr::summarise(fruitless = sum(fruitless, na.rm = TRUE),
-                        irregular = sum(irregular, na.rm = TRUE), 
-                        unauthorised = sum(unauthorised, na.rm = TRUE),
-                        total_exp = sum(total_exp, na.rm = TRUE)) %>%
-        dplyr::mutate(pct = ((fruitless + irregular + unauthorised) / total_exp) * 100) %>%
+        dplyr::summarise(across(c("fruitless", "irregular", "unauthorised", "total_exp",  ~sum(.x, na.rm = TRUE)))) %>% 
+        dplyr::mutate(total_uifw = fruitless + irregular + unauthorised, 
+                pct = (total_uifw / total_exp) * 100) %>%
         filter(period > 2017)
 
 uifw_plot_long <- uifw_plot_wide %>%
@@ -460,7 +527,8 @@ uifw_plot_long <- uifw_plot_wide %>%
         irregular = "Irregular", 
         unauthorised = "Unauthorised", 
         pct = "Percentage of Total Expenditure")) %>%
-        dplyr::select(-category)
+        dplyr::select(-category) %>%
+        dplyr::filter(period > 2019)
 
 axis_fact <- max(uifw_plot_wide[c("fruitless", "irregular", "unauthorised")], na.rm = TRUE)  / 8
 print(axis_fact)
@@ -473,7 +541,7 @@ area_plot <- ggplot(data = uifw_plot_long, aes(x = as.numeric(period), y = value
         geom_line(data = uifw_plot_long %>% dplyr::filter(category_label == "Percentage of Total Expenditure"),
                 aes(y = value * axis_fact),
                 colour = "#F7F5EF",
-                linewidth = 3.2, 
+                linewidth = 1.5, 
                 show.legend = FALSE
                 ) +
         geom_line(data = uifw_plot_long %>% dplyr::filter(category_label == "Percentage of Total Expenditure"),
@@ -498,10 +566,134 @@ area_plot <- ggplot(data = uifw_plot_long, aes(x = as.numeric(period), y = value
                 expand = expansion(mult = c(0, 0))) + 
         scale_linetype_manual(values = c("Percentage of Total Expenditure" = "solid")) +
         scale_colour_manual(values = c("Percentage of Total Expenditure" = "#C9A66B")) +
-        labs(title    = "Unauthorised, Irregular, Fruitless & Wasteful Spending\namong Municipalities, 2018 - 2025",
+        labs(title    = "Unauthorised, Irregular, Fruitless & Wasteful Spending\namong Municipalities, 2019/20 - 2023/24",
         x        = "Financial Year",
-        caption = "Sources: National Treasury") +
+        caption = "substack.com/@onderstromings\nSource: National Treasury") +
         guides(fill = guide_legend(title = NULL, order = 1)) +
         substack_theme
-area_plot
-## WHAT TO DO ABOUT THE MUNICIPALITIES WHO SAW FUNDING WITHHELD?
+
+area_path <- paste0(output_dir, "/areaplot.png")
+
+
+png(filename = area_path,
+        width = 1137,
+        height = 650,
+        res = 130)
+print(area_plot)
+dev.off()
+}
+
+
+####
+## Debtor Age Profile
+####
+
+
+if (TRUE){
+
+ 
+bracket_order <- c("< 90", "91 - 180", "181 - 360", "> 360")
+
+hist_data <- debt_merge %>%
+        dplyr::select(period, total_amount.sum, badi_amount.sum, bad_amount.sum, dplyr::matches("^l|g1")) %>%
+        dplyr::filter(period >= 2020, !(stringr::str_detect(stringr::str_sub(demarcation.code, 1, 2), "DC"))) %>%
+        tidyr::pivot_longer(cols = c(dplyr::matches("pct$"), dplyr::matches("[0-9]_amount.sum")),
+                                names_to = c("horison", ".value"),
+                                names_pattern = "(.+)_(amount\\.sum|pct)") %>%
+        dplyr::mutate(type = case_when(horison %in% c("total_amount.sum", "badi_amount.sum", "bad_amount.sum") ~ "0", 
+                TRUE ~ "1"), 
+                        label = case_when(horison %in% c("l30", "l60", "l90") ~ "< 90",
+                                        horison %in% c("l120", "l150", "l180") ~ "91 - 180",
+                                        horison == "l1" ~ "181 - 360",
+                                        horison == "g1" ~ "> 360", 
+                                        TRUE ~ "Alt"), 
+                        label = factor(label, levels = bracket_order)) %>%
+        dplyr::filter(amount.sum > 0, !(demarcation.code == "KZN225" & period == 2023))
+
+        ##Exclude Msunduzi 2023, its reported receivable amount was  393166474, nearly 10x greater than any other observation
+
+
+max <- hist_data %>%
+                dplyr::group_by(label, period) %>%
+                dplyr::summarise(amount = sum(amount.sum, na.rm = TRUE)) %>%
+                arrange(desc(amount)) %>%
+                head(1) %>%
+                pull(amount)
+
+y_breaks <- scales::breaks_pretty(n = 6)(c(0, 50000000))
+##ymax = 26535310, use 30000000
+print(max)
+
+debthorisons <- list()
+for (year in c(2022:2024)){
+
+        plot_data <- hist_data %>%
+                dplyr::filter(period == year) %>%
+                dplyr::group_by(label) %>%
+                dplyr::summarise(amount = sum(amount.sum, na.rm = TRUE), .groups = "drop")
+        fyear <- paste0((year - 1), "/", stringr::str_sub(year, -2, -1))
+        debthist_temp <- ggplot(data = plot_data, aes(x = label, y = amount)) +
+                geom_col(fill = "#5C8A5A") +
+                labs(y = "R Million",
+                        x = "Days Outstanding", 
+                        title = fyear) +
+                scale_y_continuous(breaks = y_breaks,
+                        minor_breaks = scales::breaks_pretty(n = 12),
+                        labels  = function(x) ifelse(x == 0, "", scales::label_number(scale = 1e-6, big.mark = ",")(x)),
+                        expand = expansion(mult = c(0, 0))) +
+                coord_cartesian(ylim = c(0, max * 1.05)) +
+                substack_theme +
+                theme(panel.grid.major = element_blank(),
+                        panel.grid.minor = element_blank(), 
+                        plot.title.position = "panel", 
+                        plot.title = element_text(colour = "#1F2A24", size = rel(1), hjust = 0.5, face = "plain"),
+                        panel.border = element_blank()) 
+
+        debthorisons[[as.character(year)]] <- debthist_temp
+}
+
+
+combined_plot <- patchwork::wrap_plots(debthorisons, nrow = length(debthorisons)) +
+                patchwork::plot_layout(axis_titles = "collect", guides = "collect", axes = "collect") +
+                patchwork::plot_annotation(title = "Age of Recoverable UIFWE Debt, 2021/22 - 2023/24",
+                                caption = "substack.com/@onderstromings\nSource: National Treasury\nNote: Msunduzi (KZN225) was dropped in 2023 as total value was 10x higher than next highest amount.", 
+                                theme = substack_theme)
+
+
+debt_plot <- cowplot::ggdraw(combined_plot) +   
+        theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+debthist_path <- paste0(output_dir, "/debthist.png")
+
+png(filename = debthist_path,
+        width = 1137,
+        height = 800,
+        res = 190)
+print(debt_plot)
+dev.off()
+
+
+check <- df_uifw %>%
+        dplyr::group_by(demarcation.code, period) %>%
+        dplyr::summarise(across(c("fruitless", "irregular", "unauthorised", "total_exp"),  ~sum(.x, na.rm = TRUE))) %>% 
+        dplyr::mutate(total_uifw = fruitless + irregular + unauthorised, 
+                pct = (total_uifw / total_exp) * 100) %>%
+        dplyr::filter(period == 2024 & total_uifw > 0 & !(stringr::str_detect(stringr::str_sub(demarcation.code, 1, 2), "DC")))
+
+
+}
+
+debtor_profiles[["NC061"]]
+
+
+metrohist
+}
+####
+## GeoMap
+####
+
+
+####
+## Debtor ID 
+####
+
