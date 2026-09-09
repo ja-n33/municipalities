@@ -328,7 +328,7 @@ debt_merge <- debt %>%
         dplyr::select(dplyr::any_of(c("customer_group.code", "financial_period.period", "item.code", "demarcation.code", "total_amount.sum", "badi_amount.sum", "bad_amount.sum", "g1_amount.sum")),
                         dplyr::matches("^l")) %>%
         dplyr::rename(period = financial_period.period) %>%
-        dplyr::group_by(, demarcation.code, period) %>%
+        dplyr::group_by(demarcation.code, period) %>%
         dplyr::summarise(
                         dplyr::across(c(dplyr::any_of(c("total_amount.sum", "badi_amount.sum", "bad_amount.sum", "g1_amount.sum")), dplyr::matches("^l")),
                          ~sum(.x, na.rm = TRUE))) %>%
@@ -413,10 +413,6 @@ for (yr in (2018:2025)){
                 }
         }
 
-
-sapply(configs, function(cfg) cfg$string_name)
-names(configs)
-
 wide_list <- list()
 
 for (config in names(configs)){
@@ -450,7 +446,7 @@ incexp_df <- incexp_full %>%
         dplyr::select(financial_period.period, demarcation.code, opex) %>%
         dplyr::rename(period = financial_period.period) 
 
-capital_df <- capital_full %>%
+capital_df_ungrouped <- capital_full %>%
         mutate(NEW = case_when(is.na(NEW) ~ 0, TRUE ~ NEW),
                 RENEWAL = case_when(is.na(RENEWAL) ~ 0, TRUE ~ RENEWAL),
                 UPGRADING = case_when(is.na(UPGRADING) ~ 0, TRUE ~ UPGRADING),
@@ -475,16 +471,33 @@ capital_df <- capital_full %>%
         dplyr::rename(period = financial_period.period) %>%
         tidyr::complete(period, demarcation.code, category) %>%
         dplyr::group_by(period, demarcation.code) %>%
-        dplyr::summarise(gross_temp = sum(gross, na.rm = TRUE), 
+        dplyr::mutate(gross_pmax = pmax(gross, 0)) %>% ## Chalk off reversals
+        dplyr::summarise(gross_pmax = sum(gross_pmax, na.rm = TRUE), 
                         net = sum(net, na.rm = TRUE), 
                         new = sum(new, na.rm = TRUE),
                         .groups = "drop") %>%
         left_join(incexp_df, by = c("demarcation.code", "period")) %>%
         dplyr::filter(stringr::str_detect(demarcation.code, "DC") == FALSE) %>%
-        dplyr::mutate(capex = gross_temp, 
-                total_exp = capex + opex) %>%
+        dplyr::mutate(capex = gross_pmax, 
+                total_exp = capex + opex) 
+
+capital_df <- capital_df_ungrouped %>%
         dplyr::group_by(period, demarcation.code) %>%
-        dplyr::summarise(total_exp = sum(total_exp))
+        dplyr::summarise(total_opex = sum(opex, na.rm = TRUE), 
+                        total_exp = sum(total_exp, na.rm = TRUE))
+
+flagged_df <- capital_df_ungrouped %>%
+        dplyr::filter(period >= 2023) %>%
+        dplyr::group_by(demarcation.code) %>%
+        dplyr::summarise(total_exp = sum(total_exp, na.rm = TRUE), 
+                        total_capex = sum(capex, na.rm = TRUE)) %>%
+        dplyr::mutate(capex_ratio = ifelse(total_capex > 0, total_capex / total_exp, NA_integer_ ), 
+                        flagged = ifelse(capex_ratio > 0.4 | is.na(capex_ratio), 1, 0)) %>%
+        dplyr::select(demarcation.code, flagged, capex_ratio)
+
+check_flags <- flagged_df %>% dplyr::filter(flagged == 1)
+
+
 
 ####
 ##Bind four dataframes
@@ -493,10 +506,13 @@ capital_df <- capital_full %>%
 df_uifw <- left_join(left_join(left_join(df_uifw, munic_list, by = "demarcation.code"), capital_df, by = c("period", "demarcation.code")), debt_merge, by = c("demarcation.code", "period")) %>%
         dplyr::filter(stringr::str_detect(demarcation.code, "DC") == FALSE) %>%
         dplyr::mutate(total_uifw = fruitless + irregular + unauthorised, 
-                pct = (total_uifw / total_exp) * 100) 
+                pct_opex = (total_uifw / total_opex) * 100, 
+                pct_total = (total_uifw / total_exp) * 100) 
 
 rm(capital_df, capital_full, incexp_full, nt_data_debtor)
 
+
+df_uifw <- left_join(df_uifw, capital_df %>% dplyr::select(demarcation.code, total_opex, total_exp), by = "demarcation.code")
 ##Keep debt df for later use
 }
 
@@ -509,6 +525,8 @@ rm(capital_df, capital_full, incexp_full, nt_data_debtor)
 ####
 ##Area plot
 ####
+
+if (TRUE){
 
 
 uifw_plot_wide <- df_uifw %>%
@@ -568,9 +586,12 @@ area_plot <- ggplot(data = uifw_plot_long, aes(x = as.numeric(period), y = value
         scale_colour_manual(values = c("Percentage of Total Expenditure" = "#C9A66B")) +
         labs(title    = "Unauthorised, Irregular, Fruitless & Wasteful Spending\namong Municipalities, 2019/20 - 2023/24",
         x        = "Financial Year",
-        caption = "substack.com/@onderstromings\nSource: National Treasury") +
+        caption = "substack.com/@onderstromings\n \nSource: National Treasury") +
         guides(fill = guide_legend(title = NULL, order = 1)) +
-        substack_theme
+        substack_theme + 
+        theme(panel.grid.major = element_blank(),
+                panel.grid.minor = element_blank(), 
+                panel.border = element_blank())
 
 area_path <- paste0(output_dir, "/areaplot.png")
 
@@ -613,6 +634,13 @@ hist_data <- debt_merge %>%
         ##Exclude Msunduzi 2023, its reported receivable amount was  393166474, nearly 10x greater than any other observation
 
 
+check <- hist_data %>%
+        dplyr::group_by(period, horison) %>%
+        dplyr::summarise(amount = sum(amount.sum)) %>%
+        dplyr::filter(period >= 2022)
+
+
+
 max <- hist_data %>%
                 dplyr::group_by(label, period) %>%
                 dplyr::summarise(amount = sum(amount.sum, na.rm = TRUE)) %>%
@@ -625,7 +653,7 @@ y_breaks <- scales::breaks_pretty(n = 6)(c(0, 50000000))
 print(max)
 
 debthorisons <- list()
-for (year in c(2022:2024)){
+for (year in c(2023:2025)){
 
         plot_data <- hist_data %>%
                 dplyr::filter(period == year) %>%
@@ -652,12 +680,30 @@ for (year in c(2022:2024)){
         debthorisons[[as.character(year)]] <- debthist_temp
 }
 
+# Check recovery % after a year
+
+period_totals <- hist_data %>%
+  dplyr::filter(demarcation.code != "KZN225") %>%
+  dplyr::group_by(period) %>%
+  dplyr::summarise(total_amount = sum(amount.sum, na.rm = TRUE), .groups = "drop") %>%
+  dplyr::arrange(period) %>%
+  dplyr::mutate(prev_total = dplyr::lag(total_amount, order_by = period))
+
+g1_by_period <- hist_data %>%
+  dplyr::filter(horison == "g1", demarcation.code != "KZN225") %>%
+  dplyr::group_by(period) %>%
+  dplyr::summarise(g1_amount = sum(amount.sum, na.rm = TRUE), .groups = "drop")
+
+debt_roll <- g1_by_period %>%
+  dplyr::left_join(period_totals, by = "period") %>%
+  dplyr::mutate(carried = g1_amount / prev_total)
+
 
 combined_plot <- patchwork::wrap_plots(debthorisons, nrow = length(debthorisons)) +
                 patchwork::plot_layout(axis_titles = "collect", guides = "collect", axes = "collect") +
-                patchwork::plot_annotation(title = "Age of Recoverable UIFWE Debt, 2021/22 - 2023/24",
+                patchwork::plot_annotation(title = "Age of Recoverable UIFWE Debt, 2022/23 - 2024/25",
                                 caption = "substack.com/@onderstromings\nSource: National Treasury\nNote: Msunduzi (KZN225) was dropped in 2023 as total value was 10x higher than next highest amount.", 
-                                theme = substack_theme)
+                                theme = substack_theme + theme(axis.title = element_text(face = "plain")))
 
 
 debt_plot <- cowplot::ggdraw(combined_plot) +   
@@ -672,28 +718,501 @@ png(filename = debthist_path,
 print(debt_plot)
 dev.off()
 
-
-check <- df_uifw %>%
-        dplyr::group_by(demarcation.code, period) %>%
-        dplyr::summarise(across(c("fruitless", "irregular", "unauthorised", "total_exp"),  ~sum(.x, na.rm = TRUE))) %>% 
-        dplyr::mutate(total_uifw = fruitless + irregular + unauthorised, 
-                pct = (total_uifw / total_exp) * 100) %>%
-        dplyr::filter(period == 2024 & total_uifw > 0 & !(stringr::str_detect(stringr::str_sub(demarcation.code, 1, 2), "DC")))
-
-
-}
-
-debtor_profiles[["NC061"]]
-
-
-metrohist
-}
-####
-## GeoMap
-####
-
-
 ####
 ## Debtor ID 
 ####
 
+piechart_df <- debt %>%
+        dplyr::filter(financial_year_end.year == 2025 & !(stringr::str_detect(stringr::str_sub(demarcation.code, start = 1, end = 2), "DC")) & total_amount.sum >= 0 & demarcation.code != "KZN225") %>%
+        dplyr::select(total_amount.sum, demarcation.label, demarcation.code, customer_group.code) %>%
+        dplyr::mutate(customer.code = case_when(stringr::str_detect(stringr::str_sub(customer_group.code, start = 1, end = 2), "22") ~ "Organs of the State", 
+                                stringr::str_detect(stringr::str_sub(customer_group.code, start = 1, end = 2), "23") ~ "Commercial",
+                                stringr::str_detect(stringr::str_sub(customer_group.code, start = 1, end = 2), "24") ~ "Households",
+                                stringr::str_detect(stringr::str_sub(customer_group.code, start = 1, end = 2), "25") ~ "Other",
+                                TRUE ~ "NA")) %>% 
+        dplyr::group_by(customer.code) %>%
+        dplyr::summarise(group.sum = sum(total_amount.sum, na.rm = TRUE), .groups = "drop") %>%
+        dplyr::mutate(total.sum = sum(group.sum, na.rm = TRUE),
+                        pct = (group.sum  / total.sum) * 100)
+
+piechart <- ggplot(piechart_df, aes(x = "", y = pct, fill = customer.code)) +
+                geom_col(width = 1) +
+                scale_fill_manual(values = c("Households" = "#2E4B3C", "Commercial" = "#5C8A5A", "Organs of the State" = "#A3B86C", "NA" = "#9E9E9E")) +
+                coord_polar(theta = "y") +
+                geom_text(aes(label = ifelse(pct > 5, paste0(round(pct), "%"), "")), 
+                        position = position_stack(vjust = 0.5), 
+                        color = "black", 
+                        size = 5,
+                        fontface = "plain") +
+                labs(title = "Receivable UIFWE Composition by Customer\nCategory, 2024/25",
+                        fill = "Customer Group",
+                        x = "", 
+                        y = ""
+                #caption = "substack.com/@onderstromings\nSource: National Treasury\nNote: Negative entries and Msunduzi (KZN225) were dropped."
+                ) +
+                guides(fill = guide_legend(nrow = 2, byrow = FALSE)) +
+                substack_theme + 
+                theme(panel.grid.major = element_blank(),
+                        panel.grid.minor = element_blank(), 
+                        plot.title.position = "panel", 
+                        panel.border = element_blank(), 
+                        axis.text = element_blank(),
+                        axis.ticks = element_blank(),
+                        axis.title = element_blank(),
+                        plot.title = element_text(face = "plain"))
+
+
+age_header <- ggplot() + 
+  labs(title = "Age of Recoverable UIFWE Debt, 2022/23 - 2024/25") +
+  substack_theme + 
+  theme(plot.title = element_text(face = "plain"))
+
+combined_with_title <- age_header / combined_plot +
+  patchwork::plot_layout(heights = c(1, 15)) 
+
+
+pie_cols <- patchwork::wrap_plots(list(combined_with_title, piechart), nrow = 1) +
+                patchwork::plot_layout(axis_titles = "collect", axes = "collect") +
+                patchwork::plot_annotation(title = "UIFWE Receivables Profile",
+                                caption = "substack.com/@onderstromings\n \nSource: National Treasury\nNote: Negative entries and Msunduzi (KZN225) were dropped.", 
+                                theme = substack_theme + theme(plot.title = element_text(size = rel(1.3), hjust = 0.5)))
+
+pie_cols
+
+
+
+combined_path <- paste0(output_dir, "/combined.png")
+
+png(filename = combined_path,
+        width = 1137,
+        height = 800,
+        res = 110)
+print(pie_cols)
+dev.off()
+
+
+####
+## By Metros
+####
+
+
+barplot_df <- df_uifw %>%
+        dplyr::filter(period >= 2023, municipality.miif_category == "A") %>%
+        dplyr::group_by(demarcation.code) %>%
+        dplyr::summarise(dplyr::across(c(fruitless, irregular, unauthorised, total_exp),
+                        ~sum(.x, na.rm = TRUE))) %>%
+        dplyr::mutate(uifw = fruitless + irregular + unauthorised, 
+                        dplyr::across(c(fruitless, irregular, unauthorised, uifw), 
+                        ~.x / total_exp * 100, 
+                        .names = "{.col}_pct")
+                        ) %>%
+        dplyr::select(demarcation.code, fruitless_pct, irregular_pct, unauthorised_pct, uifw_pct) %>%
+        tidyr::pivot_longer(
+                cols      = ends_with("_pct"),
+                names_to  = "category",
+                values_to = "value"
+                ) %>%
+        dplyr::mutate(
+                category_label = recode(category,
+                        fruitless_pct      = "Fruitless & Wasteful",
+                        unauthorised_pct      = "Unauthorised",
+                        irregular_pct = "Irregular",
+                        uifw_pct   = "UIFW"),
+                category_label = factor(category_label, levels = c("Fruitless & Wasteful", "Irregular", "Unauthorised", "UIFW")), 
+                city = recode(demarcation.code,
+                        CPT = "Cape Town",      ETH = "eThekwini",
+                        JHB = "Johannesburg",   NMA = "Nelson Mandela Bay",
+                        TSH = "Tshwane",        BUF = "Buffalo City",
+                        MAN = "Mangaung", EKU = "Ekurhuleni")) %>%
+        dplyr::group_by(demarcation.code) %>%
+        dplyr::mutate(total_value = value[category_label == "UIFW"]) %>%
+        dplyr::ungroup() %>%
+        dplyr::mutate(demarcation.code = forcats::fct_reorder(demarcation.code, total_value))
+                
+cat_colours <- c(
+  "Unauthorised"        = "#2E4B3C",
+  "Irregular" = "#A3B86C",
+  "Fruitless & Wasteful"              = "#5C8A5A",
+  "UIFW"        = "#C9A66B"
+)
+
+barplot <- ggplot(barplot_df, aes(x = value,
+                    y = demarcation.code,
+                    fill = category_label)) +
+  geom_col(position = position_dodge(width = 0.75), width = 0.65) +
+  scale_fill_manual(values = cat_colours) +
+  scale_x_continuous(
+        labels  = function(x) ifelse(x == 0, "", (x)),
+        limits = c(0, NA),
+        expand = expansion(mult = c(0.001, 0.05)), 
+        breaks = scales::breaks_pretty(n = 5)
+) +
+  labs(
+    title    = "UIFWE as a Percentage of Total Expenditure by Metro,\n2022/23 - 2023/24",
+    x        = "% of Total Expenditure",
+    y        = NULL,
+    fill     = NULL,
+    caption = "substack.com/@onderstromings\n \nSource: National Treasury"
+  ) +
+  coord_flip() +
+  theme_minimal(base_size = 12) +
+  substack_theme + 
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_line(colour = "#DCE0C8", linewidth = 0.25),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    text               = element_text(colour = "#1F2A24"),
+    axis.text          = element_text(colour = "#4A4460"),
+    axis.text.x        = element_text(margin = margin(t = 0)),
+    legend.position    = "bottom",
+    legend.key.size    = unit(0.45, "cm"),
+    plot.margin        = margin(12, 16, 8, 12), 
+    panel.border = element_blank()
+  ) 
+
+
+barpath <- paste0(output_dir, "/metro_bar_uifwe.png")
+
+png(filename = barpath,
+        width = 1137,
+        height = 650,
+        res = 140)
+print(barplot)
+dev.off()
+
+
+####
+## Flagged Scatter
+####
+ 
+df_scatter <- dplyr::left_join(flagged_df, df_uifw, by = "demarcation.code") %>%
+        dplyr::filter(period >= 2023) %>%
+        dplyr::mutate(scatter_label = paste0(demarcation.label, " (", demarcation.code, ")")) %>%
+        dplyr::group_by(scatter_label, demarcation.code) %>%
+        dplyr::summarise(dplyr::across(c(fruitless, irregular, unauthorised, total_exp, total_opex),
+                        ~sum(.x, na.rm = TRUE))) %>%
+        dplyr::mutate(uifw = fruitless + irregular + unauthorised, 
+                        dplyr::across(c(fruitless, irregular, unauthorised, uifw), 
+                        ~.x / total_exp * 100, 
+                        .names = "{.col}_pct")
+                        ) %>%
+        dplyr::select(scatter_label, uifw_pct, demarcation.code) %>%
+        dplyr::left_join(flagged_df %>% dplyr::select(demarcation.code, capex_ratio, flagged), by = "demarcation.code") %>%
+        dplyr::mutate(capex_ratio = capex_ratio * 100) %>%
+        dplyr::filter(demarcation.code != "FS185" & is.finite(uifw_pct)) %>%
+        dplyr::select(demarcation.code, flagged, capex_ratio, uifw_pct, scatter_label) 
+
+
+cor(df_scatter$uifw_pct, df_scatter$capex_ratio, use = "complete.obs", method = "pearson")
+
+scatter <- ggplot(data = df_scatter %>% dplyr::filter(flagged == 1), aes(x = capex_ratio, y = uifw_pct)) +
+        geom_point(size = 3, colour =  "#5C8A5A") +
+        ggrepel::geom_text_repel(
+                aes(label = scatter_label), 
+                                size = 2, colour = "#1F2A24", 
+                                max.overlaps = Inf) +
+        scale_x_continuous(labels  = function(x) ifelse(x == 40, "", (x)),
+                        limits = c(40, 85), 
+                        expand = expansion(mult = c(0, 0.03)), 
+                        breaks = scales::pretty_breaks(n = 4)) +
+        scale_y_continuous(
+                labels  = function(x) ifelse(x == 0, "", (x)),
+                limits = c(0, 60), 
+                expand = expansion(mult = c(0, 0.03)), 
+                breaks = scales::pretty_breaks(n = 4)
+                ) + 
+        labs(
+                title = "UIFWE and Infrastructure Spending for Flagged\nMunicipalities, 2022/23 - 2023/24", 
+                x = "Infrastructure Spending (%)",
+                y = "UIFW (%)",
+                caption = "substack.com/@onderstromings\n \nSource: National Treasury\nNote: Values are given as a percentage of total expenditure."
+                ) +
+        geom_hline(yintercept = median(map_df$uifw_pct * 100, na.rm = TRUE),
+                        linetype = "dashed",
+                        colour = "#C9A66B", 
+                        linewidth = 0.75) +
+        annotate("text", x = 45, y = (median(map_df$uifw_pct * 100, na.rm = TRUE) + 1),
+                        label = "Median UIFWE (%)", 
+                        colour = "#C9A66B", 
+                        size = 2.75) +
+        substack_theme + 
+        theme(
+                panel.grid.minor.x = element_blank(),
+                panel.grid.minor.y = element_blank(), 
+                panel.border = element_blank()
+        )
+scatter
+
+
+
+scatterpath <- paste0(output_dir, "/scatter_uifwe.png")
+
+png(filename = scatterpath,
+        width = 1200,
+        height = 1100,
+        res = 190)
+print(scatter)
+dev.off()
+
+
+####
+## Geomap
+####
+
+# Leaves will contain     1) demarcation label,
+#                         2) unauthorised (amount and %)
+#                         3) irregular (amount and %)
+#                         4) fruitless (amount and %)
+#                         5) Total (2022/23 & 2023/24) (amount and %)
+#                         6) UIFWE receivable (2025) (% > year old)
+ 
+
+
+map_resp <- httr::GET("https://services7.arcgis.com/oeoyTUJC8HEeYsRB/arcgis/rest/services/LocalMunicipalities2018_Final/FeatureServer/0/query?where=1%3D1&outFields=*&outSR=4326&f=geojson")
+
+writeLines(httr::content(map_resp, "text", encoding = "UTF-8"), here::here("data", "munic_map.geojson"))
+
+map <- sf::st_read(here::here("data", "munic_map.geojson")) %>%
+                dplyr::select(CAT_B, DATE, Shape__Area, Shape__Length, geometry) %>%
+                dplyr::rename(demarcation.code = CAT_B)
+
+
+map_df_data <- df_uifw %>%
+        dplyr::filter(period >= 2023) %>%
+        dplyr::group_by(demarcation.code, demarcation.label) %>%
+        dplyr::summarise(dplyr::across(c(fruitless, irregular, unauthorised, total_exp),
+                        ~sum(.x, na.rm = TRUE))) %>%
+        dplyr::mutate(uifw = fruitless + irregular + unauthorised, 
+                        dplyr::across(c(fruitless, irregular, unauthorised, uifw), 
+                        ~.x / total_exp, 
+                        .names = "{.col}_pct"), 
+                        dplyr::across(c(fruitless_pct, irregular_pct, unauthorised_pct, uifw_pct),
+                        ~ case_when(!is.finite(.x) ~ NA_real_ , 
+                                TRUE ~ .x))
+                        )
+
+pal <- colorNumeric(palette = c("#F7F5EF", "#DCE9C4", "#B8C99A", "#8AA870", "#5C8A5A", "#2E4B3C", "#1A2E22"),
+                domain = c(0, 0.4), 
+                na.color = "#9E9E9E")
+
+map_df <- dplyr::left_join(dplyr::left_join(map_df_data, debt_merge %>% dplyr::filter(period == 2025) %>% dplyr::select(demarcation.code, total_amount.sum, g1_pct, g1_amount.sum), by = "demarcation.code"), map, by = "demarcation.code")  %>%
+                dplyr::mutate(fill_colour = ifelse(!is.finite(uifw_pct), "#9E9E9E", pal(pmin(uifw_pct, 0.4)))) %>%
+                dplyr::mutate(g1_pct = ifelse(is.finite(g1_pct), g1_pct / 100, NA_real_))
+
+                        
+interact_map <- leaflet(
+                map_df %>%
+                st_as_sf()
+                ) %>%
+        addPolygons(
+                fillColor = ~fill_colour,
+                weight = 1, 
+                color = "white",
+                fillOpacity = 0.75,
+                highlightOptions = highlightOptions(
+                        weight = 2,
+                        color = "black",
+                        fillOpacity = 0.9, 
+                        bringToFront = TRUE
+                ),
+                label = ~lapply(paste0(
+  "<b>", demarcation.label, "</b><br>",
+  "<b>Total UIFWE - 2022/23 & 2023/24: R",
+  paste0(scales::comma(uifw, big.mark = " "),
+         ifelse(is.finite(uifw_pct),
+                paste0(" (", scales::percent(uifw_pct, accuracy = 0.1), ")"),
+                " (NA)")),
+ "</b><br>",
+  "&nbsp;&nbsp;&nbsp;Unauthorised Spending: R",
+  paste0(scales::comma(unauthorised, big.mark = " "),
+         ifelse(is.finite(unauthorised_pct),
+                paste0(" (", scales::percent(unauthorised_pct, accuracy = 0.1), ")"),
+                " (NA)")),
+  "<br>",
+  "&nbsp;&nbsp;&nbsp;Irregular Spending: R",
+  paste0(scales::comma(irregular, big.mark = " "),
+         ifelse(is.finite(irregular_pct),
+                paste0(" (", scales::percent(irregular_pct, accuracy = 0.1), ")"),
+                " (NA)")),
+  "<br>",
+  "&nbsp;&nbsp;&nbsp;Wasteful & Fruitless Spending: R",
+  paste0(scales::comma(fruitless, big.mark = " "),
+         ifelse(is.finite(fruitless_pct),
+                paste0(" (", scales::percent(fruitless_pct, accuracy = 0.1), ")"),
+                " (NA)")),
+  "<br>",
+  "<b>UIFWE Receivable - 2025 (% less than 1 year old): R",
+  ifelse(is.finite(total_amount.sum) & is.finite(g1_pct),
+         paste0(scales::comma(total_amount.sum, big.mark = " "), " (", scales::percent(g1_pct), ")"),
+         "0 (NA)"),
+"</b><br>"
+), htmltools::HTML),
+        labelOptions = labelOptions(
+        style = list("font-weight" = "normal", padding = "6px 8px"),
+        textsize = "13px",
+        direction = "auto"
+        )
+        ) %>%
+        addLegend(
+                 pal = colorNumeric(palette = c("#F7F5EF", "#DCE9C4", "#B8C99A", "#8AA870", "#5C8A5A", "#2E4B3C", "#1A2E22"),
+                domain = c(0, 0.4)),
+                values = c(0, 0.4),
+                labFormat = function(type, cuts, p) {
+                        labs <- paste0(100 * cuts, "%")
+                        labs[length(labs)] <- paste0(100 * cuts[length(labs) - 1], "%+")
+                        labs
+                        },
+                title = "UIFWE as % of Total Expenditure",
+                position = "bottomright") %>%
+        htmlwidgets::onRender("
+    function(el, x) {
+      this.getContainer().style.background = '#EDE8DA';
+    }
+  ")
+interact_map
+
+
+cor(map_df$fruitless_pct, map_df$unauthorised_pct, use = "complete.obs", method = "spearman")
+
+
+
+filepath_html <- paste0(output_dir, "/uifwe_plot.html")
+htmlwidgets::saveWidget(interact_map, file = filepath_html, selfcontained = TRUE)
+
+filepath_png <- paste0(output_dir, "/uifwe_plot.png")
+webshot2::webshot(filepath_html, file = filepath_png, cliprect = "viewport")
+
+
+datawrapper_table <- map_df_data %>% 
+        dplyr::ungroup() %>%
+        dplyr::left_join(munic_list %>% dplyr::select(demarcation.code, municipality.province_code), by = "demarcation.code") %>%
+        dplyr::select(demarcation.label, municipality.province_code, fruitless, irregular, unauthorised, uifw, fruitless_pct, irregular_pct,unauthorised_pct, uifw_pct) %>%
+        dplyr::mutate(across(c(fruitless_pct, irregular_pct, unauthorised_pct, uifw_pct), 
+        ~.x * 100, .names = "{.col}")) %>%
+        dplyr::rename(Municipality = demarcation.label, 
+                        Province = municipality.province_code, 
+                        `Fruitless & Wasteful (R)` = fruitless,   
+                        `Fruitless & Wasteful (%)` = `fruitless_pct`, 
+                        `Unauthorised (R)` = unauthorised,
+                        `Unauthorised (%)` = unauthorised_pct,
+                        `Irregular (R)` = irregular,
+                        `Irregular (%)` = irregular_pct,
+                        `Total UIFW (R)` = uifw,
+                        `Total UIFW (%)` = uifw_pct) 
+
+csvpath <- paste0(output_dir, "/uifwe.csv")
+utils::write.csv(datawrapper_table, csvpath, row.names = FALSE)
+
+
+
+####
+## Scatterplot
+####
+
+##Use spearman correlation, show rank of irregular on x and rank of fruitless on y
+
+
+df_scatter_cats <- map_df %>%
+        dplyr::ungroup() %>%
+        dplyr::filter(dplyr::if_all(c(fruitless_pct, unauthorised_pct, irregular_pct), is.finite)) %>%
+        dplyr::mutate(fruitless_rank = rank(fruitless_pct, ties.method = "min"), 
+                unauthorised_rank = rank(unauthorised_pct, ties.method = "min"), 
+                irregular_rank = rank(irregular_pct, ties.method = "min"))
+
+print(((5104819224/3892332640)^(1/4)) - 1)
+
+# fruitless grew by 7%
+
+print(((23860286443/21072725763)^(1/4)) - 1)
+# irregular grew by 3.2%
+
+print(((27618605411/19443720742)^(1/4)) - 1)
+# unauthorised grew by 9.1%
+
+print(((611505258077/506183611001)^(1/4)) - 1)
+# total expenditure grew by 4.8%
+
+max_rank <- max(df_scatter_cats$fruitless_rank, df_scatter_cats$unauthorised_rank, 
+                df_scatter_cats$irregular_rank, na.rm = TRUE)
+
+print(median(map_df$uifw_pct, na.rm = TRUE))
+print(median(map_df$fruitless_pct, na.rm = TRUE))
+print(median(map_df$irregular_pct, na.rm = TRUE))
+print(median(map_df$unauthorised_pct, na.rm = TRUE))
+
+
+
+
+rank_levels <- as.character(1:max_rank)
+
+df_scatter_cats <- df_scatter_cats %>%
+  dplyr::mutate(
+    fruitless_rank    = factor(fruitless_rank, levels = rank_levels),
+    unauthorised_rank = factor(unauthorised_rank, levels = rank_levels),
+    irregular_rank    = factor(irregular_rank, levels = rank_levels)
+  )
+
+scatters <- list(
+  fruit_unauth = list(
+    x = "unauthorised_rank", y = "fruitless_rank",
+    axistitles = c("Unauthorised Rank", "Fruitless & Wasteful Rank")
+  ),
+  fruit_irreg = list(
+    x = "irregular_rank", y = "fruitless_rank",
+    axistitles = c("Irregular Rank", "Fruitless & Wasteful Rank")
+  )
+)
+
+corrscatters <- list()
+
+for (nm in names(scatters)) {
+        spec <- scatters[[nm]]
+
+
+        scatter_plot <- ggplot(
+                data = df_scatter_cats,
+        aes(x = .data[[spec$x]], y = .data[[spec$y]])
+        ) +
+        geom_point(size = 3, colour = "#5C8A5A") +
+        scale_x_discrete(
+        breaks = rank_levels[seq(1, max_rank, length.out = 5) %>% round()],
+        expand = expansion(mult = c(0, 0.03)),
+        ) +
+        scale_y_discrete(
+        breaks = rank_levels[seq(1, max_rank, length.out = 5) %>% round()],
+        expand = expansion(mult = c(0, 0.03)),
+        ) +
+        labs(
+        x = spec$axistitles[1],
+        y = spec$axistitles[2],
+        caption = "substack.com/@onderstromings\n \nSource: National Treasury"
+        ) +
+        substack_theme +
+        theme(
+        panel.grid.minor.x = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        panel.border = element_blank()
+        )
+
+        corrscatters[[nm]] <- scatter_plot
+        }
+
+corrscatters[["fruit_irreg"]]
+
+row(df_scatter_cats)
+df_scatter_cats %>% dplyr::filter(!is.na(unauthorised_rank), !is.na(fruitless_rank)) %>% nrow()
+
+class(df_scatter_cats$unauthorised_rank)
+levels(df_scatter_cats$unauthorised_rank) %>% head()
+table(is.na(df_scatter_cats$unauthorised_rank))
+
+
+scatterpath <- paste0(output_dir, "/scatter_uifwe.png")
+
+png(filename = scatterpath,
+        width = 1200,
+        height = 1100,
+        res = 190)
+print(scatter)
+dev.off()
