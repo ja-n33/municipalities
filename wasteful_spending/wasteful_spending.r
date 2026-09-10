@@ -1363,7 +1363,7 @@ for (cat_lab in unique(dotplot_df$category_label)){
                 geom_point(aes(x = pre, y = demarcation.code, colour = demarcation.code , shape = "2023/24"), size = 4) +
                 geom_point(aes(x = post, y = demarcation.code, colour = demarcation.code , shape = "2024/25"), size = 4) +
                 scale_colour_manual(values = city_colour_map, guide = "none") +
-                scale_shape_manual(name = NULL, values = c("2023/24" = 1, "2024/25" = 16)) +
+                scale_shape_manual(name = NULL, values = c("2022/23 & 2023/24" = 1, "2024/25" = 16)) +
                 labs(title = plot_title,
                         x = "% of Total Expenditure", 
                         y = "Metro") +
@@ -1400,7 +1400,7 @@ for (i in no_y){
 
 combined_dotplot <- patchwork::wrap_plots(dotplots, nrow = 2) +
                 patchwork::plot_layout(axis_titles = "collect", guides = "collect", axes = "collect") +
-                patchwork::plot_annotation(title = "Change in UIFWE in Metro's from 2023/24 to 2024/5",
+                patchwork::plot_annotation(title = "Change in UIFWE in Metro's from 2022/23 & 2023/24\nto 2024/25",
                                 caption = "substack.com/@onderstromings\n \nSources: Auditor General SA, National Treasury\nNote: Johannesburg's expenditure data was unavailable at the time of writing.", 
                                 theme = substack_theme + theme(axis.title = element_text(face = "bold"), plot.title = element_text(size = rel(1.3))))
 
@@ -1416,6 +1416,28 @@ print(combined_dotplot)
 dev.off()
 
 
+new_grid <- cowplot::plot_grid(area_plot, combined_dotplot, 
+                                ncol = 2)
+
+update_title <-  ggdraw() +
+        draw_label("UIFWE charts with 2024/25 included", 
+             fontface = "bold", size = 24, hjust = 0.5, colour = "#1F2A24") +
+        theme(plot.background = element_rect(fill = "#EDE8DA", colour = NA))
+
+full_updated <- cowplot::plot_grid(update_title, new_grid,
+                                        ncol = 1,
+                                        rel_heights = c(0.045, 1))
+
+full_updated
+
+updated_path <- paste0(output_dir, "/updates.png")
+
+png(filename = updated_path,
+        width = 1700,
+        height = 800,
+        res = 110)
+print(full_updated)
+dev.off()
 
 }
 
