@@ -11,7 +11,7 @@ ifelse(dir.exists(file.path(output_dir)), print("Path Exists"),
 
 ####################################################################################################################################################################################
 
-census_zip <- here::here("census_sample.zip")
+census_zip <- here::here("data", "census_sample.zip")
 
 census_dir <- here::here("data", "census_sample")
 
@@ -476,7 +476,7 @@ pal <- colorNumeric(palette = c("#F7F5EF", "#DCE9C4", "#B8C99A", "#8AA870", "#5C
                 na.color = "#9E9E9E")
 
 df_plot <- df_plot %>%
-  mutate(fill_colour = ifelse(flagged == 1 | is.na(capex_ratio), "#9E9E9E", pal(capex_ratio)))
+  dplyr::mutate(fill_colour = ifelse(flagged == 1 | is.na(capex_ratio), "#9E9E9E", pal(capex_ratio)))
 
 
 

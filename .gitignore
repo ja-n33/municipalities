@@ -1,0 +1,29 @@
+census_sample
+census_sample/
+.DS_Store
+~$1-infrastructure.docx
+munic_spending.r
+Circular 71 - Financial Ratios and Norms - 17 January 2014/Annexure 1 -  Summary of Uniform Financial Ratios and Norms.pdf
+Circular 71 - Financial Ratios and Norms - 17 January 2014/Annexure 2 - Template for Calculation of Uniform Financial Ratios and Norms.7z
+Circular 71 - Financial Ratios and Norms - 17 January 2014/Annexure 2 - Template for Calculation of Uniform Financial Ratios and Norms.zip
+Circular 71 - Financial Ratios and Norms - 17 January 2014/MFMA Circular No 71 Financial Ratios and Norms  - 17 January 2014.pdf
+docs/index.html
+infrastructure/mw1-infrastructure.docx
+infrastructure/data/munic_map.geojson
+infrastructure/docs/index.html
+infrastructure/output/~$capital_ranks.xlsx
+infrastructure/output/capex_plot.html
+
+
+# R specific
+.Rhistory
+.RData
+.Rproj.user/
+
+# data files you don't want tracked
+*.csv
+wasteful_spending/*.csv
+
+# output files
+*.png
+*.pdfdata/census_sample.zip

@@ -32,7 +32,7 @@ substack_theme <- theme_minimal(base_size = 12) +
 
 ####################################################################################################################################################################################
 if (TRUE){
-census_zip <- here::here("census_sample.zip")
+census_zip <- here::here("data", "census_sample.zip")
 
 census_dir <- here::here("data", "census_sample")
 
@@ -129,7 +129,6 @@ munic_list <- left_join(munic_census, munic_names, by  = c("dem_code" = "demarca
                 mutate(district.miif_category = case_when(is.na(district.miif_category) ~ "C3", 
                                                                 TRUE ~ district.miif_category))
 
-rm(hh_wgt, hh_sz, hh_df)
 }
 
 ####################################################################################################################################################################################
@@ -250,8 +249,70 @@ for (item in itemcodes){
 
 df_uifw <- df_raw %>%
         tidyr::pivot_wider(id_cols = c(financial_year_end.year, demarcation.code), names_from = item.code, values_from = amount.sum) %>%
-        dplyr::rename(period = financial_year_end.year)
+        dplyr::rename(period = financial_year_end.year) %>%
+        dplyr::left_join(munic_list %>% dplyr::select(demarcation.code, demarcation.label), by = "demarcation.code")
 
+label_code_lookup <- munic_list %>%
+        distinct(demarcation.label, demarcation.code) %>%
+        dplyr::mutate(demarcation.label = tolower(demarcation.label))
+
+mfma2425 <- readr::read_csv(here::here("wasteful_spending", "mfma_annexure1_2024-25_clean.csv"), n_max = 270) %>%
+  dplyr::filter(auditee_category == "MUN") %>%
+  dplyr::rename(demarcation.label = auditee, 
+                unauthorised = unauthorised_expenditure_rand_millions, 
+                irregular = irregular_expenditure_rand_millions, 
+                fruitless = fruitless_wasteful_expenditure_rand_millions) %>%
+  dplyr::mutate(dplyr::across(c(fruitless, unauthorised, irregular), 
+                ~ dplyr::case_when(is.finite(.x) ~ .x * 1000000, TRUE ~ 0))) %>%
+  dplyr::mutate(period = 2025, 
+                demarcation.label = case_when(demarcation.label == "Emalahleni" & province == "EC" ~ "Emalahleni (EC)", 
+                        demarcation.label == "Emalahleni" & province == "MP" ~ "Emalahleni (MP)", 
+                        demarcation.label == "Big 5 Hlabisa" ~ "Hlabisa Big Five", 
+                        demarcation.label == "City of Cape Town Metro" ~ "Cape Town",
+                        demarcation.label == "Nelson Mandela Bay Metro" ~ "Nelson Mandela Bay",
+                        demarcation.label == "City of Johannesburg Metro" ~ "City of Johannesburg",
+                        demarcation.label == "eThekwini Metro" ~ "eThekwini",    
+                        demarcation.label == "Mangaung Metro" ~ "Mangaung",
+                        demarcation.label == "eThekwini Metro" ~ "eThekwini",   
+                        demarcation.label == "Buffalo City Metro" ~ "Buffalo City",   
+                        demarcation.label == "City of Tshwane Metro" ~ "City of Tshwane", 
+                        demarcation.label == "City of Ekurhuleni Metro" ~ "City of Ekurhuleni", 
+                        demarcation.label == "Kai !Garib" ~ "!Kai! Garib", 
+                        demarcation.label == "Elias Motsoaledi (Greater Groblersdal)" ~ "Elias Motsoaledi", 
+                        demarcation.label == "Bela-Bela" ~ "Bela Bela", 
+                        demarcation.label == "Dr Beyers Naudé" ~ "Dr Beyers Naude",
+                        demarcation.label == "Chief Albert Luthuli" ~ "Albert Luthuli",
+                        demarcation.label == "Dr. JS Moroka" ~ "Dr J.S. Moroka",
+                        demarcation.label == "Port St. Johns" ~ "Port St Johns",
+                        demarcation.label == "Mbombela" ~ "Mbombela",
+                        demarcation.label == "West Rand" ~ "West Rand City",
+                        demarcation.label == "Bergriver" ~ "Bergrivier",
+                        demarcation.label == "Amahlati" ~ "Amahlathi",
+                        demarcation.label == "Dr A B Xuma" ~ "Dr. A.B. Xuma",
+                        demarcation.label == "Dr Pixley Ka Isaka Seme" ~ "Pixley Ka Seme",
+                        demarcation.label == "JB Marks" ~ "J B Marks",
+                        demarcation.label == "Modimolle-Mookgophong" ~ "Modimolle-Mookgopong",
+                        demarcation.label == "Ingquza Hill" ~ "Ngquza Hills",
+                        demarcation.label == "Kou Kamma" ~ "Kou-Kamma",
+                        demarcation.label == "Kgetlengriver" ~ "Kgetlengrivier", 
+                        demarcation.label == "Mahikeng" ~ "Mafikeng", 
+                        demarcation.label == "Matlosana" ~ "City of Matlosana", 
+                        demarcation.label == "Naledi" & province == "NW" ~ "Naledi (NW)", 
+                        demarcation.label == "Fetakgomo Tubatse" ~ "Tubatse Fetakgomo",
+                        demarcation.label == "Pixley Ka Seme" ~ "Pixley Ka Seme (MP)", 
+                        demarcation.label == "Lepelle Nkumpi" ~ "Lepelle-Nkumpi",
+                        demarcation.label == "Intsika Yethu" ~ "Vuyisile Mini",
+                        demarcation.label == "Lekwa Teemane" ~ "Lekwa-Teemane",
+                        demarcation.label == "Makhudutamaga" ~ "Makhuduthamaga",
+                        TRUE ~ demarcation.label),
+                demarcation.label = tolower(demarcation.label)) %>%
+  dplyr::select(demarcation.label, period, unauthorised, irregular, fruitless)
+
+
+mfma2425 <- dplyr::left_join(mfma2425, label_code_lookup, by = "demarcation.label") %>%
+        dplyr::filter(!is.na(demarcation.code))
+
+df_uifw <- bind_rows(df_uifw, mfma2425)
 
 ####
 ##Debtor data 
@@ -437,7 +498,6 @@ capital_full <- wide_list$capital
 
 incexp_full <- wide_list$incexp
 
-rm(nt_data_exp, wide_list, df_raw_exp)
 
 incexp_df <- incexp_full %>%
         dplyr::mutate(opex = rowSums(across(any_of(c("3000", "3100", "3200", "3300", "3400", "3500",
@@ -495,25 +555,19 @@ flagged_df <- capital_df_ungrouped %>%
                         flagged = ifelse(capex_ratio > 0.4 | is.na(capex_ratio), 1, 0)) %>%
         dplyr::select(demarcation.code, flagged, capex_ratio)
 
-check_flags <- flagged_df %>% dplyr::filter(flagged == 1)
-
-
 
 ####
 ##Bind four dataframes
 ####
 
-df_uifw <- left_join(left_join(left_join(df_uifw, munic_list, by = "demarcation.code"), capital_df, by = c("period", "demarcation.code")), debt_merge, by = c("demarcation.code", "period")) %>%
+df_uifw <- left_join(left_join(left_join(df_uifw, munic_list %>% dplyr::select(-demarcation.label), by = "demarcation.code"), capital_df, by = c("demarcation.code", "period")), debt_merge, by = c("demarcation.code", "period")) %>%
         dplyr::filter(stringr::str_detect(demarcation.code, "DC") == FALSE) %>%
         dplyr::mutate(total_uifw = fruitless + irregular + unauthorised, 
                 pct_opex = (total_uifw / total_opex) * 100, 
                 pct_total = (total_uifw / total_exp) * 100) 
 
-rm(capital_df, capital_full, incexp_full, nt_data_debtor)
-
-
-df_uifw <- left_join(df_uifw, capital_df %>% dplyr::select(demarcation.code, total_opex, total_exp), by = "demarcation.code")
 ##Keep debt df for later use
+
 }
 
 ####################################################################################################################################################################################
@@ -531,7 +585,7 @@ if (TRUE){
 
 uifw_plot_wide <- df_uifw %>%
         dplyr::group_by(period) %>%
-        dplyr::summarise(across(c("fruitless", "irregular", "unauthorised", "total_exp",  ~sum(.x, na.rm = TRUE)))) %>% 
+        dplyr::summarise(across(c("fruitless", "irregular", "unauthorised", "total_exp"),  ~sum(.x, na.rm = TRUE))) %>% 
         dplyr::mutate(total_uifw = fruitless + irregular + unauthorised, 
                 pct = (total_uifw / total_exp) * 100) %>%
         filter(period > 2017)
@@ -579,12 +633,12 @@ area_plot <- ggplot(data = uifw_plot_long, aes(x = as.numeric(period), y = value
                         labels  = function(x) ifelse(x == 0, "", x)), 
                 expand = expansion(mult = c(0.001, 0.05))) +
         scale_x_continuous(name = "Financial Year", 
-                breaks =  c(2018:2025),
+                breaks =  c(2018:2026),
                 labels = function(x) paste0(x-1, "/", stringr::str_sub(x, start = 3, end = 4)), 
                 expand = expansion(mult = c(0, 0))) + 
         scale_linetype_manual(values = c("Percentage of Total Expenditure" = "solid")) +
         scale_colour_manual(values = c("Percentage of Total Expenditure" = "#C9A66B")) +
-        labs(title    = "Unauthorised, Irregular, Fruitless & Wasteful Spending\namong Municipalities, 2019/20 - 2023/24",
+        labs(title    = "Unauthorised, Irregular, Fruitless & Wasteful Spending\namong Municipalities, 2019/20 - 2024/25",
         x        = "Financial Year",
         caption = "substack.com/@onderstromings\n \nSource: National Treasury") +
         guides(fill = guide_legend(title = NULL, order = 1)) +
@@ -593,7 +647,9 @@ area_plot <- ggplot(data = uifw_plot_long, aes(x = as.numeric(period), y = value
                 panel.grid.minor = element_blank(), 
                 panel.border = element_blank())
 
-area_path <- paste0(output_dir, "/areaplot.png")
+
+area_plot
+area_path <- paste0(output_dir, "/areaplot_update.png")
 
 
 png(filename = area_path,
@@ -602,6 +658,22 @@ png(filename = area_path,
         res = 130)
 print(area_plot)
 dev.off()
+
+print(5648118000/5104819224 - 1)
+##currently a 10.6% increase yoy 2024 to 2025 in fruitless,
+
+print(26529790000/23860286443 - 1) ## Irregular
+#11.19%
+
+print(29346410000/27618605411 - 1) ## Unauthorised
+# 6.26%
+
+print(725171539186/616079532170 - 1) ## Total Exp
+# 17.71%
+
+print(61524318000/56583711078 - 1) ## Total UIFWE
+# 8.7%
+
 }
 
 
@@ -638,8 +710,6 @@ check <- hist_data %>%
         dplyr::group_by(period, horison) %>%
         dplyr::summarise(amount = sum(amount.sum)) %>%
         dplyr::filter(period >= 2022)
-
-
 
 max <- hist_data %>%
                 dplyr::group_by(label, period) %>%
@@ -709,7 +779,7 @@ combined_plot <- patchwork::wrap_plots(debthorisons, nrow = length(debthorisons)
 debt_plot <- cowplot::ggdraw(combined_plot) +   
         theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
 
-debthist_path <- paste0(output_dir, "/debthist.png")
+debthist_path <- paste0(output_dir, "/debthist_update.png")
 
 png(filename = debthist_path,
         width = 1137,
@@ -717,11 +787,11 @@ png(filename = debthist_path,
         res = 190)
 print(debt_plot)
 dev.off()
-
+}
 ####
 ## Debtor ID 
 ####
-
+if (TRUE){
 piechart_df <- debt %>%
         dplyr::filter(financial_year_end.year == 2025 & !(stringr::str_detect(stringr::str_sub(demarcation.code, start = 1, end = 2), "DC")) & total_amount.sum >= 0 & demarcation.code != "KZN225") %>%
         dplyr::select(total_amount.sum, demarcation.label, demarcation.code, customer_group.code) %>%
@@ -781,7 +851,7 @@ pie_cols
 
 
 
-combined_path <- paste0(output_dir, "/combined.png")
+combined_path <- paste0(output_dir, "/combined_update.png")
 
 png(filename = combined_path,
         width = 1137,
@@ -789,15 +859,16 @@ png(filename = combined_path,
         res = 110)
 print(pie_cols)
 dev.off()
-
+}
 
 ####
 ## By Metros
 ####
 
+if (TRUE){
 
 barplot_df <- df_uifw %>%
-        dplyr::filter(period >= 2023, municipality.miif_category == "A") %>%
+        dplyr::filter(period >= 2023 & period <= 2024, municipality.miif_category == "A") %>%
         dplyr::group_by(demarcation.code) %>%
         dplyr::summarise(dplyr::across(c(fruitless, irregular, unauthorised, total_exp),
                         ~sum(.x, na.rm = TRUE))) %>%
@@ -881,11 +952,12 @@ png(filename = barpath,
 print(barplot)
 dev.off()
 
-
+}
 ####
 ## Flagged Scatter
 ####
  
+if (TRUE){
 df_scatter <- dplyr::left_join(flagged_df, df_uifw, by = "demarcation.code") %>%
         dplyr::filter(period >= 2023) %>%
         dplyr::mutate(scatter_label = paste0(demarcation.label, " (", demarcation.code, ")")) %>%
@@ -946,7 +1018,7 @@ scatter
 
 
 
-scatterpath <- paste0(output_dir, "/scatter_uifwe.png")
+scatterpath <- paste0(output_dir, "/scatter_uifwe_updated.png")
 
 png(filename = scatterpath,
         width = 1200,
@@ -955,10 +1027,14 @@ png(filename = scatterpath,
 print(scatter)
 dev.off()
 
+}
+
 
 ####
 ## Geomap
 ####
+
+if (TRUE){
 
 # Leaves will contain     1) demarcation label,
 #                         2) unauthorised (amount and %)
@@ -1082,8 +1158,13 @@ htmlwidgets::saveWidget(interact_map, file = filepath_html, selfcontained = TRUE
 
 filepath_png <- paste0(output_dir, "/uifwe_plot.png")
 webshot2::webshot(filepath_html, file = filepath_png, cliprect = "viewport")
+}
 
+####
+## Datawrapper Table
+###
 
+if (TRUE){
 datawrapper_table <- map_df_data %>% 
         dplyr::ungroup() %>%
         dplyr::left_join(munic_list %>% dplyr::select(demarcation.code, municipality.province_code), by = "demarcation.code") %>%
@@ -1103,7 +1184,7 @@ datawrapper_table <- map_df_data %>%
 
 csvpath <- paste0(output_dir, "/uifwe.csv")
 utils::write.csv(datawrapper_table, csvpath, row.names = FALSE)
-
+}
 
 
 ####
@@ -1112,7 +1193,7 @@ utils::write.csv(datawrapper_table, csvpath, row.names = FALSE)
 
 ##Use spearman correlation, show rank of irregular on x and rank of fruitless on y
 
-
+if (TRUE){
 df_scatter_cats <- map_df %>%
         dplyr::ungroup() %>%
         dplyr::filter(dplyr::if_all(c(fruitless_pct, unauthorised_pct, irregular_pct), is.finite)) %>%
@@ -1216,3 +1297,125 @@ png(filename = scatterpath,
         res = 190)
 print(scatter)
 dev.off()
+
+}
+####
+## Dot Plot
+####
+
+if (TRUE){
+
+dotplot_df <- df_uifw %>%
+        dplyr::filter(period >= 2024 , municipality.miif_category == "A") %>%
+        dplyr::mutate(prepost = ifelse(period == 2025, "post", "pre")) %>%
+        dplyr::group_by(demarcation.code, prepost, .drop = "") %>%
+        dplyr::summarise(dplyr::across(c(fruitless, irregular, unauthorised, total_exp),
+                        ~sum(.x, na.rm = TRUE))) %>%
+        dplyr::mutate(uifw = fruitless + irregular + unauthorised, 
+                        dplyr::across(c(fruitless, irregular, unauthorised, uifw), 
+                        ~.x / total_exp * 100, 
+                        .names = "{.col}_pct")
+                        ) %>%
+        dplyr::select(demarcation.code, prepost, fruitless_pct, irregular_pct, unauthorised_pct, uifw_pct) %>%
+        tidyr::pivot_longer(
+                cols      = ends_with("_pct"),
+                names_to  = "category",
+                values_to = "value"
+                ) %>%
+        tidyr::pivot_wider(names_from = prepost, 
+                        values_from = value) %>%
+        dplyr::mutate(category_label = dplyr::case_when(
+                        stringr::str_detect(category, "fruitless_pct")    ~ "Fruitless & Wasteful",
+                        stringr::str_detect(category, "unauthorised_pct") ~ "Unauthorised",
+                        stringr::str_detect(category, "irregular_pct")    ~ "Irregular",
+                        stringr::str_detect(category, "uifw_pct")         ~ "Total UIFW",
+                        TRUE ~ category),
+                category_label = factor(category_label, levels = c("Fruitless & Wasteful", "Irregular", "Unauthorised", "Total UIFW")), 
+                demarcation.code = factor(demarcation.code, levels = c("BUF", "CPT", "EKH", "ETH", "MAN", "NMA", "TSH")))
+
+city_colour_map <- c(
+  CPT = "#2E4B3C",
+  EKH = "#A3B86C",
+  ETH = "#5C8A5A",
+  TSH = "#C9A66B",
+  NMA = "#7A6B4F",
+  MAN = "#8C5E58",
+  BUF = "#4A6B7C"
+)
+
+
+## NOTE 2022/23 not included
+dotplots <- list()
+
+for (cat_lab in unique(dotplot_df$category_label)){
+        plot_title <- cat_lab
+
+        temp_df <- dotplot_df %>% 
+                dplyr::filter(category_label == cat_lab & demarcation.code != "JHB")
+
+        cat <- temp_df %>%
+                head(1) %>%
+                dplyr::pull(category)
+
+        dotplot <- ggplot(temp_df) +
+                geom_segment(aes(x = pre, xend = post, y = demarcation.code, yend = demarcation.code, colour = demarcation.code), 
+                                size = 1.5) + 
+                geom_point(aes(x = pre, y = demarcation.code, colour = demarcation.code , shape = "2023/24"), size = 4) +
+                geom_point(aes(x = post, y = demarcation.code, colour = demarcation.code , shape = "2024/25"), size = 4) +
+                scale_colour_manual(values = city_colour_map, guide = "none") +
+                scale_shape_manual(name = NULL, values = c("2023/24" = 1, "2024/25" = 16)) +
+                labs(title = plot_title,
+                        x = "% of Total Expenditure", 
+                        y = "Metro") +
+                guides(shape = guide_legend(override.aes = list(colour = "black"))) +
+                substack_theme + 
+                theme(
+                panel.grid.major.x = element_blank(),
+                panel.grid.minor.x = element_blank(),
+                panel.grid.major.y = element_blank(),
+                panel.grid.minor.y = element_blank(),
+                text               = element_text(colour = "#1F2A24"),
+                axis.text          = element_text(colour = "#4A4460"),
+                axis.text.x        = element_text(margin = margin(t = 0)),
+                legend.position    = "bottom",
+                legend.key.size    = unit(0.45, "cm"),
+                plot.margin        = margin(12, 16, 8, 12), 
+                plot.title        = element_text(colour = "#1F2A24", face = "plain", size = rel(1), margin = margin(b = 4), hjust = 0.5),
+                ) 
+
+        dotplots[[as.character(cat)]] <- dotplot
+
+}
+
+no_y <- c(2, 4)
+
+for (i in no_y){
+
+        dotplots[[i]] <- dotplots[[i]] +
+
+        theme(axis.text.y  = element_blank(),
+          axis.title.y = element_blank())
+
+}
+
+combined_dotplot <- patchwork::wrap_plots(dotplots, nrow = 2) +
+                patchwork::plot_layout(axis_titles = "collect", guides = "collect", axes = "collect") +
+                patchwork::plot_annotation(title = "Change in UIFWE in Metro's from 2023/24 to 2024/5",
+                                caption = "substack.com/@onderstromings\n \nSources: Auditor General SA, National Treasury\nNote: Johannesburg's expenditure data was unavailable at the time of writing.", 
+                                theme = substack_theme + theme(axis.title = element_text(face = "bold"), plot.title = element_text(size = rel(1.3))))
+
+dotplot_path <- paste0(output_dir, "/metro_dotplot_reduced.png")
+
+combined_dotplot
+
+png(filename = dotplot_path,
+        width = 1137,
+        height = 800,
+        res = 110)
+print(combined_dotplot)
+dev.off()
+
+
+
+}
+
