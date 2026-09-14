@@ -144,6 +144,7 @@ if (TRUE){
 
 
 fy_annexures <- c()
+df_list <- list()
 
 for (fy in c("2021", "2122", "2223", "2324", "2425")){
 
@@ -160,7 +161,8 @@ for (fy in c("2021", "2122", "2223", "2324", "2425")){
 
     if (fy == "2021"){
     temp_data <- readxl::read_excel(path, sheet = 1, skip = 5, col_names = col_names) %>%
-                dplyr::mutate(period = paste0("20", stringr::str_sub(fy, start = -2, end = -1))) %>%
+                dplyr::mutate(period = paste0("20", stringr::str_sub(fy, start = -2, end = -1)),
+                                  dplyr::across(c("findings_on_specific_risk_areas_human_resource_management","findings_on_specific_risk_areas_information_technology"), ~ as.character(.x))) %>%
                 dplyr::rename_with(~ stringr::str_remove(.x, "^x20\\d{2}_\\d{2}_audit_"), 
                         .cols = 8:10) %>%
                 dplyr::rename_with(~ paste0("prior", stringr::str_remove(.x, "^x20\\d{2}_\\d{2}_audit_")), 
@@ -175,38 +177,66 @@ for (fy in c("2021", "2122", "2223", "2324", "2425")){
             ifelse(is.na(subcat_2223), tolower(category), tolower(paste0(category, "_", subcat_2223)))
         )
         temp_data <- readxl::read_excel(path, sheet = 1, skip = 5, col_names = col_names_2223) %>%
-                dplyr::mutate(period = paste0("20", stringr::str_sub(fy, start = -2, end = -1))) %>%
+                dplyr::mutate(period = paste0("20", stringr::str_sub(fy, start = -2, end = -1)),
+                                  dplyr::across(c("findings_on_specific_risk_areas_human_resource_management","findings_on_specific_risk_areas_information_technology"), ~ as.character(.x))) %>%
                 dplyr::rename_with(~ stringr::str_remove(.x, "^x20\\d{2}_\\d{2}_audit_"), .cols = 7:9) %>%
                 dplyr::rename_with(~ paste0("prior", stringr::str_remove(.x, "^x20\\d{2}_\\d{2}_audit_")), .cols = 10:12)
     }
 
+    else if (fy == "2425") {
+        
+        col_names_2425 <- stringr::str_remove(janitor::make_clean_names(col_names), "na_")
+
+        temp_data <- readxl::read_excel(path, sheet = 1, skip = 5, col_names = col_names_2425) %>%
+                dplyr::mutate(period = paste0("20", stringr::str_sub(fy, start = -2, end = -1)),
+                                  dplyr::across(c("findings_on_specific_risk_areas_human_resource_management","findings_on_specific_risk_areas_information_technology"), ~ as.character(.x))) %>%
+                dplyr::rename_with(~ stringr::str_remove(.x, "^x20\\d{2}_\\d{2}_audit_"), .cols = 7:9) %>%
+                dplyr::rename_with(~ paste0("prior", stringr::str_remove(.x, "^x20\\d{2}_\\d{2}_audit_")), .cols = 10:12)
+    }
+
+
     else {
         temp_data <- readxl::read_excel(path, sheet = 1, skip = 5, col_names = col_names) %>%
-                dplyr::mutate(period = paste0("20", stringr::str_sub(fy, start = -2, end = -1))) %>%
+                dplyr::mutate(period = paste0("20", stringr::str_sub(fy, start = -2, end = -1)), 
+                                dplyr::across(c("findings_on_specific_risk_areas_human_resource_management","findings_on_specific_risk_areas_information_technology"), ~ as.character(.x))) %>%
                 dplyr::rename_with(~ stringr::str_remove(.x, "^x20\\d{2}_\\d{2}_audit_"),
                         .cols = 7:9) %>%
                 dplyr::rename_with(~ paste0("prior", stringr::str_remove(.x, "^x20\\d{2}_\\d{2}_audit_")),
                         .cols = 10:12)
                         }
 
+    df_list[[max(temp_data$period)]] <- temp_data 
+
     fy_annexures <- dplyr::bind_rows(fy_annexures, temp_data) 
 }
 
+view24 <- df_list[["2024"]]
+
+view25 <- df_list[["2025"]]
+
+
+
 fy_annexures <- fy_annexures %>%
     dplyr::mutate(auditee = case_when(
-        auditee == "Emalahleni" & stringr::str_detect(municipal_mdb_codes, "MP") ~ "Emalahleni (MP)",
-        auditee == "Emalahleni" & stringr::str_detect(municipal_mdb_codes, "EC") ~ "Emalahleni (EC)",
-        auditee %in% c("Dr A B Xuma Local Municipality", "Dr A B Xuma") ~ "Dr A B Xuma Local Municipality",
-        auditee == "Elias Motsoaledi" ~ "Elias Motsoaledi (Greater Groblersdal)",
+        auditee == "Emalahleni" & stringr::str_detect(province, "MP") ~ "Emalahleni (MP)",
+        auditee == "Emalahleni" & stringr::str_detect(province, "EC") ~ "Emalahleni (EC)",
+        auditee %in% c("Dr A B Xuma Local Municipality", "Dr A B Xuma", "Dr. A.B. Xuma") ~ "Engcobo",
+        auditee %in% c("Elias Motsoaledi", "Elias Motsoaledi (Greater Groblersdal)") ~ "Elias Motsoaledi (Greater Groblersdal)",
         auditee == "Lekwa-Teemane" ~ "Lekwa Teemane",
-        TRUE ~ auditee))
+        auditee %in% c("Maluti-A-Phofung", "Maluti-a-Phofung") ~ "Maluti-A-Phofung", 
+        auditee %in% c("Dr JS Moroka", "Dr. JS Moroka") ~ "Dr. JS Moroka",
+        auditee == "Big 5 Hlabisa" ~ "Big Five Hlabisa",
+        auditee == "Johannes Phumani Phungula" ~ "Ubuhlebezwe",
+        auditee == "Dr Nkosazana Dlamini Zuma" ~ "Dr Nkosazana Dlamini-Zuma",
+        auditee == "Port St. Johns" ~ "Port St Johns",
+        auditee == "Kumkani Mhlontlo" ~ "Mhlontlo",
+        TRUE ~ auditee)) 
 
 label_code_lookup <- fy_annexures %>%
     dplyr::filter(!is.na(municipal_mdb_codes)) %>%
     dplyr::select(municipal_mdb_codes, auditee) %>%
     dplyr::filter(!stringr::str_detect(stringr::str_sub(municipal_mdb_codes, start = 1, end = 2), "DC")) %>%
-    dplyr::distinct(municipal_mdb_codes, auditee) %>%
-    dplyr::bind_rows(tibble::tibble(municipal_mdb_codes = "NW397", auditee = "Dr A B Xuma Local Municipality"))
+    dplyr::distinct(municipal_mdb_codes, auditee) 
 
 dropcols <- c("province", "auditee_category", "number", "municipal_mdb_codes")
 
@@ -231,29 +261,292 @@ annexures_df <- fy_annexures %>%
       unauthorised_irregular_and_fruitless_and_wasteful_expenditure_fruitless_and_wasteful_expenditure_amount_r
     )
     ) %>%
-    dplyr::rename(demarcation.code = municipal_mdb_codes, 
-                demarcation.label = auditee) %>%
+    dplyr::rename(demarcation.code = municipal_mdb_codes) %>%
     dplyr::filter(auditee_type %in% c("LM", "IC", "ICM", "MET"), 
                 demarcation.code %in% munic_list$demarcation.code, 
                 outcomes_audit_opinion == "Audit not finalised at legislated date" |
+                !period != "2025" |
                 !is.na(unauthorised_irregular_fruitless_qual) |
                 !is.na(unauth_amt) | 
                 !is.na(irreg_amt)) %>%
-        dplyr::distinct(demarcation.code, period)
+        dplyr::distinct(demarcation.code, period, .keep_all = TRUE)
+        # dplyr::select(-auditee)
+
+
 yearcheck <- annexures_df %>% dplyr::count(period)
 
 
-munic_check <- annexures_df %>%
-                dplyr::group_by(period) %>%
-                summarise(n_dmc = n_distinct(demarcation.code))
+# dupes <- annexures_df %>%
+#   dplyr::group_by(period) %>%
+#   dplyr::add_count(demarcation.code, name = "n") %>%
+#   dplyr::ungroup() %>%
+#   dplyr::filter(n > 1) %>%
+#   dplyr::arrange(period, demarcation.code)
 
-dupes <- annexures_df %>%
-  dplyr::group_by(period) %>%
-  dplyr::add_count(demarcation.code, name = "n") %>%
-  dplyr::ungroup() %>%
-  dplyr::filter(n > 1) %>%
-  dplyr::arrange(period, demarcation.code)
 
-setdiff(munic_list$demarcation.code, annexures_df$demarcation.code)
+drilldown_audop <- paste(
+    "financial_year_end.year",
+    "demarcation.code",
+    "demarcation.label",
+    "opinion.code",
+    "opinion.label", sep = "|"
+)
+
+fetch_data_audop <- function(year, 
+                        amount_type = "AUDA", 
+                        url = "https://municipaldata.treasury.gov.za/api/cubes/audit_opinions/aggregate", 
+                        drilldown = drilldown_audop,
+                        pagesize = 5000, 
+                        page = 1, 
+                        itemcode = "fruitless"){
+
+  base_url <- url
+  
+  cut <- sprintf("financial_year_end.year:%d", year)
+
+  page <- 1 
+
+  all_pages <- list()
+
+  repeat{
+        resp <- GET(base_url, query = list(
+        drilldown = drilldown_audop,
+        cut = cut, 
+        page = page, 
+        pagesize = pagesize, 
+        format = "csv"))
+
+        df_temp <- readr::read_csv(content(resp, "text", encoding = "UTF-8"), 
+                                # col_types = readr::cols(opinion.code = readr::col_character()),
+                                show_col_types = FALSE)
+        if(nrow(df_temp) == 0) break 
+
+        all_pages[[page]] <- df_temp
+
+        if (nrow(df_temp) < pagesize) break
+        page <- page + 1
+        Sys.sleep(0.5)  
+        
+        }
+
+        bind_rows(all_pages)
+
+}
+
+nt_data_audop <- list()
+
+for (yr in (2018:2025)){
+
+                        year_df <- fetch_data_audop(year = yr) 
+
+                        if (nrow(year_df) > 1){
+                        year_df <- year_df %>%
+                        dplyr::rename(period = financial_year_end.year) %>%
+                        dplyr::mutate(period = as.character(period))
+                        }
+
+                        nt_data_audop[[as.character(yr)]] <- year_df
+
+                message(yr)
+}
+
+
+audop_nt <- dplyr::bind_rows(nt_data_audop) %>%
+        dplyr::filter(!stringr::str_detect(stringr::str_sub(demarcation.code, 1, 2), "DC"))
+
+
+audits_df <- dplyr::left_join(annexures_df, audop_nt, by = c("period", "demarcation.code")) %>%
+            dplyr::filter(as.numeric(period) >= 2020) %>%
+            dplyr::mutate(dplyr::across(
+                                dplyr::matches("^outcomes_predetermined_objectives|^outcomes_compliance_with_legislation|financial_statement_qualification_areas|findings_on"),
+                                     ~ as.numeric(dplyr::case_when(.x %in% c("N", "R") ~ 1,
+                                            is.na(.x) ~ 0,
+                                            .x == "A" ~ 0,
+                                      TRUE ~ 0)))) %>%
+            dplyr::mutate(findings = rowSums(dplyr::across(dplyr::matches("^outcomes_predetermined_objectives|^outcomes_compliance_with_legislation")), na.rm = TRUE),
+                            outcomes_audit_opinion_i = dplyr::case_when(
+                            stringr::str_detect(outcomes_audit_opinion, "Unqualified") &  findings == 0 ~ "Unqualified with no findings",
+                            stringr::str_detect(outcomes_audit_opinion, "Unqualified") &  findings != 0 ~ "Unqualified with findings",
+                            stringr::str_detect(outcomes_audit_opinion, "Qualified") &  findings == 0 ~ "Qualified with no findings",
+                            stringr::str_detect(outcomes_audit_opinion, "Qualified") &  findings != 0 ~ "Qualified with findings",
+                            TRUE ~ outcomes_audit_opinion
+                        )) 
+
+look <- audits_df %>%
+        dplyr::filter(outcomes_audit_opinion_i == "Unqualified with no findings" & period == "2025") %>%
+        dplyr::select(auditee, demarcation.code, outcomes_audit_opinion, outcomes_audit_opinion_i, findings) 
+
+}
+# req <- httr::GET("https://municipaldata.treasury.gov.za/api/cubes/audit_opinions/model") 
+
+# model <- httr::content(req, as = "text", encoding = "UTF-8") %>%
+#     jsonlite::fromJSON()
+
+# model$model
+
+#   httr2::req_perform() %>%
+#   httr2::resp_body_json()
+
+rm(munic_qid)
+####################################################################################################################################################################################
+
+                                                                     ## Plot Data ##
+
+####################################################################################################################################################################################
+
+
+print(unique(view24$outcomes_audit_opinion))
+print(unique(view25$outcomes_audit_opinion))
+
+
+line_df <- audits_df %>%
+            dplyr::select(outcomes_audit_opinion_i, period) %>%
+            dplyr::group_by(period, outcomes_audit_opinion_i, .drop = FALSE) %>%
+            dplyr::summarise(opinions = dplyr::n()) %>%
+            dplyr::filter(as.numeric(period) > 2021) %>%
+            dplyr::mutate(period = as.numeric(period)) %>%
+            dplyr::rename(label = outcomes_audit_opinion_i, 
+                            value = opinions) 
+
+label_colour_map <- c(
+    "Unqualified with no findings"  = "#2E4B3C",
+    "Unqualified with findings"     = "#5C8A5A",
+    "Qualified with no findings"    = "#809360",
+    "Qualified with findings"       = "#A59D65",
+    "Adverse"                       = "#C9A66B",
+    "Disclaimer"                    = "#7A2E2E",
+    "Audit not finalised at legislated date" = "#8C8C8C"
+)
+
+if (TRUE){
+
+line_plot <- ggplot(data = line_df, aes(x = period, y = value, group = label, colour = label)) +
+        geom_line(linewidth = 2.5) +
+        geom_point(size = 2.5, shape = 15) +
+        geom_text(aes(label = value, hjust = ifelse(period != max(line_df$period), -0.5, 1.5)), vjust = - 2, size = 3, show.legend = FALSE) +
+        scale_colour_manual(values = label_colour_map) +
+        guides(colour = guide_legend(reverse = TRUE)) +
+        scale_y_continuous(breaks = scales::breaks_pretty(n = 6),
+                        labels  = function(x) ifelse(x == 0, "", x), 
+                        expand = expansion(mult = c(0.001, 0.05))) +
+        scale_x_continuous(
+                breaks =  c(min(line_df$period):max(line_df$period)),
+                labels = function(x) paste0(as.numeric(x) - 1, "/", as.numeric((stringr::str_sub(as.character(x), start = 3, end = 4)))), 
+                expand = expansion(mult = c(0, 0))) + 
+        labs(title = "Audit Opinions, 2020/21 - 2024/25", 
+            x = "Financial Year",
+            y = "Number of Municipalities", 
+            caption = "Source: Auditor General SA") +
+        substack_theme
+
+line_plot
+line_path <- paste0(output_dir, "/lineplot.png")
+
+
+png(filename = line_path,
+        width = 950,
+        height = 650,
+        res = 130)
+print(line_plot)
+dev.off()
+}
+
+
+####
+## Tile Plot
+####
+
+if (TRUE){
+
+opinion_order <- dput(unique(audits_df$outcomes_audit_opinion_i))
+
+scoring <- c(
+    "Unqualified with no findings"  = 6,
+    "Unqualified with findings"     = 5,
+    "Qualified with no findings"    = 4,
+    "Qualified with findings"       = 3,
+    "Adverse"                       = 2,
+    "Disclaimer"                    = 1,
+    "Audit not finalised at legislated date" = 0
+)
+
+recent_period <- max(as.numeric(audits_df$period, na.rm = TRUE))
+
+unqual_rank <- audits_df %>%
+  dplyr::mutate(
+    score = dplyr::recode(as.character(outcomes_audit_opinion_i), !!!scoring, .default = NA_real_), #!!! tells R: "take this vector and unpack it into separate named arguments, one per element" — effectively expanding severity_score into exactly the four individual name = value pairs recode() is expecting, as if I'd typed them out by hand.
+    weight = as.numeric(period) - min(as.numeric(period), na.rm = TRUE) + 1
+  ) %>%
+  dplyr::group_by(demarcation.code) %>%
+  dplyr::summarise(recent_score = score[as.numeric(period) == recent_period], 
+                    weighted_score = sum(score * weight, na.rm = TRUE)) %>%
+  dplyr::arrange(recent_score, weighted_score)
+
+tile_df <- audits_df %>%
+        dplyr::mutate(outcomes_audit_opinion = factor(outcomes_audit_opinion_i, levels = opinion_order), 
+                demarcation.code = factor(demarcation.code, unqual_rank$demarcation.code), 
+                demarcation.code = forcats::fct_rev(demarcation.code)) 
+
+tileplot <- ggplot(data = tile_df, aes(x = period, y = demarcation.code, fill = outcomes_audit_opinion_i)) +
+        geom_tile() +
+        scale_fill_manual(values = label_colour_map, breaks = names(label_colour_map)) +
+        scale_x_discrete(
+                # breaks =  c(min(line_df$period):max(line_df$period)),
+                labels = function(x) paste0(as.numeric(x) - 1, "/", as.numeric((stringr::str_sub(as.character(x), start = 3, end = 4)))), 
+                expand = expansion(mult = c(0, 0))) + 
+        labs(title = "Audit Outcomes by Municipality, 2020/21 - 2024/25",
+            x = "Financial Year", y = NULL, fill = "Audit Opinion",
+            caption = "Source: Auditor General SA") +
+        substack_theme +
+        theme(axis.text.y = element_blank())
+
+tileplot
+
+tile_path <- paste0(output_dir, "/tileplot.png")
+
+
+png(filename = tile_path,
+        width = 1050,
+        height = 650,
+        res = 130)
+
+print(tileplot)
+dev.off()
+
+}
+
+
+####
+## Financial Statement Qualification Areas
+####
+
+#Dumbbell plot comparing with 2020/21
+if (TRUE){
+
+
+}
+
+
+####
+## Findings on predetermined objectives
+####
+
+#Dumbbell plot comparing with 2020/21
+if (TRUE){
+
+
+}
+
+
+
+####
+## Findings on predetermined objectives
+####
+
+#Dumbbell plot comparing with 2020/21
+if (TRUE){
+
+
+}
 
 
