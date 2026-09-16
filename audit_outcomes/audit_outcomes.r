@@ -363,14 +363,17 @@ audits_df <- dplyr::left_join(annexures_df, audop_nt, by = c("period", "demarcat
                                             is.na(.x) ~ 0,
                                             .x == "A" ~ 0,
                                       TRUE ~ 0)))) %>%
-            dplyr::mutate(findings = rowSums(dplyr::across(dplyr::matches("^outcomes_predetermined_objectives|^outcomes_compliance_with_legislation")), na.rm = TRUE),
+            dplyr::mutate(findings = rowSums(dplyr::across(dplyr::matches("^findings_on_predetermined_objectives|^findings_on_non_compliance") &
+                                        !dplyr::matches("quality_of_submitted_performance_reports|supply_chain_management")), na.rm = TRUE),
+                            qualifications = rowSums(dplyr::across(dplyr::matches("^financial_statement_qualification_areas")), na.rm = TRUE),
                             outcomes_audit_opinion_i = dplyr::case_when(
                             stringr::str_detect(outcomes_audit_opinion, "Unqualified") &  findings == 0 ~ "Unqualified with no findings",
                             stringr::str_detect(outcomes_audit_opinion, "Unqualified") &  findings != 0 ~ "Unqualified with findings",
                             stringr::str_detect(outcomes_audit_opinion, "Qualified") &  findings == 0 ~ "Qualified with no findings",
                             stringr::str_detect(outcomes_audit_opinion, "Qualified") &  findings != 0 ~ "Qualified with findings",
                             TRUE ~ outcomes_audit_opinion
-                        )) 
+                        ), 
+                            qualified = ifelse(stringr::str_detect(outcomes_audit_opinion_i, "^Qualified"), 1, 0)) 
 
 look <- audits_df %>%
         dplyr::filter(outcomes_audit_opinion_i == "Unqualified with no findings" & period == "2025") %>%
@@ -393,10 +396,6 @@ rm(munic_qid)
                                                                      ## Plot Data ##
 
 ####################################################################################################################################################################################
-
-
-print(unique(view24$outcomes_audit_opinion))
-print(unique(view25$outcomes_audit_opinion))
 
 
 line_df <- audits_df %>%
@@ -496,7 +495,7 @@ tileplot <- ggplot(data = tile_df, aes(x = period, y = demarcation.code, fill = 
                 expand = expansion(mult = c(0, 0))) + 
         labs(title = "Audit Outcomes by Municipality, 2020/21 - 2024/25",
             x = "Financial Year", y = NULL, fill = "Audit Opinion",
-            caption = "Source: Auditor General SA") +
+            caption = caption = "substack.com/@onderstromings\n \nSource: Auditor General SA") +
         substack_theme +
         theme(axis.text.y = element_blank())
 
@@ -515,36 +514,347 @@ dev.off()
 
 }
 
-
 ####
 ## Financial Statement Qualification Areas
 ####
 
+minyear <- "2021"
+minyear_quote <- paste0(as.numeric(minyear) - 1, "/" ,as.numeric(stringr::str_sub(minyear, -2, -1)))
+print(minyear_quote)
 #Dumbbell plot comparing with 2020/21
 if (TRUE){
 
+qualifications_df <- audits_df %>%
+            dplyr::select(period, dplyr::matches("^financial_statement_qualification_areas"), qualified) %>%
+            dplyr::group_by(period) %>%
+            dplyr::filter(period %in% c(minyear, "2025")) %>%
+            dplyr::summarise(dplyr::across(c("qualified", dplyr::matches("^financial_statement_qualification_areas")), ~ sum(.x, na.rm = TRUE))) %>%
+            dplyr::rename_with( ~ stringr::str_remove(.x, "financial_statement_qualification_areas_"), dplyr::matches("^financial_statement_qualification_areas_")) %>%
+            dplyr::mutate(uifwe = dplyr::coalesce(unauthorised_irregular_as_well_as_fruitless_and_wasteful_expenditure, 
+                                    unauthorised_irregular_and_fruitless_and_wasteful_expenditure)) %>%
+            dplyr::select(-unauthorised_irregular_as_well_as_fruitless_and_wasteful_expenditure, 
+                                    - unauthorised_irregular_and_fruitless_and_wasteful_expenditure) %>%
+            tidyr::pivot_longer(cols = -period, 
+                                names_to = "label", 
+                                values_to = "value") %>%
+            dplyr::mutate(label = case_when(
+                                            label == "qualified" ~ "Qualified Audits", 
+                                            label == "non_current_assets" ~ "Non-current Assets", 
+                                            label == "current_assets" ~ "Current Assets", 
+                                            label == "liabilities" ~ "Liabilities", 
+                                            label == "capital_and_reserves" ~ "Capital and Reserves", 
+                                            label == "other_disclosure_items" ~ "Other Disclosure Items", 
+                                            label == "revenue" ~ "Revenue", 
+                                            label == "expenditure" ~ "Expenditure", 
+                                            label == "aggregate_misstatements" ~ "Aggregate Misstatements", 
+                                            label == "cash_flow_statements" ~ "Cash Flow Statements", 
+                                            label == "uifwe" ~ "UIFWE"
+                                            )) %>%
+            tidyr::pivot_wider(names_from = period,
+                                values_from = value) %>%
+            dplyr::mutate(change = `2025` - .data[[minyear]], 
+                            maxval = pmax(.data[[minyear]], `2025`), 
+                            is_max_2022 = .data[[minyear]] > `2025`,
+                            is_max_2025 = `2025` > .data[[minyear]],
+                            label = forcats::fct_reorder(label, maxval)) 
 
+
+
+label_exprs <- purrr::map(levels(qualifications_df$label), function(l) {
+  if (l == "Qualified Audits") bquote(bold(.(l))) else l
+})
+
+custom_title_qual <- paste0("Change in Financial Statement Qualifications, ",  minyear_quote ," - 2024/25")
+
+qualification_plot <- ggplot() +
+                geom_segment(data = qualifications_df %>% dplyr::filter(label != "Qualified Audits"), aes(x = label, xend = label, y = .data[[minyear]], yend = `2025`, colour = change > 0), 
+                                size = 2) + 
+                geom_point(data = qualifications_df %>% dplyr::filter(label != "Qualified Audits"), aes(x = label, y = .data[[minyear]], colour = change > 0, shape = minyear_quote), size = 4) +
+                geom_point(data = qualifications_df %>% dplyr::filter(label != "Qualified Audits"), aes(x = label, y = `2025`, colour = change > 0, shape = "2024/25"), size = 4) +
+                geom_text(data = qualifications_df %>% dplyr::filter(label != "Qualified Audits"),
+                            aes(x = label, y = `2025`, label = `2025`, colour = change > 0, vjust = ifelse(is_max_2022, 2, -1.5)),
+                            size = 4, show.legend = FALSE) +
+                geom_text(data = qualifications_df %>% dplyr::filter(label != "Qualified Audits"), 
+                            aes(x = label, y = .data[[minyear]], label = .data[[minyear]], colour = change > 0, vjust = ifelse(is_max_2025, 2, -1.5)),
+                            size = 4, show.legend = FALSE) +
+                geom_segment(data = qualifications_df %>% dplyr::filter(label == "Qualified Audits"), aes(x = label, xend = label, y = .data[[minyear]], yend = `2025`, colour = change > 0), 
+                                size = 3) + 
+                geom_point(data = qualifications_df %>% dplyr::filter(label == "Qualified Audits"), aes(x = label, y = .data[[minyear]], colour = change > 0, shape = minyear_quote), size = 6) +
+                geom_point(data = qualifications_df %>% dplyr::filter(label == "Qualified Audits"), aes(x = label, y = `2025`, colour = change > 0, shape = "2024/25"), size = 6) +
+                geom_text(data = qualifications_df %>% dplyr::filter(label == "Qualified Audits"),
+                            aes(x = label, y = `2025`, label = `2025`, colour = change > 0, vjust = ifelse(is_max_2022, 2, -1.5)),
+                            size = 6, fontface = "bold", show.legend = FALSE) +
+                geom_text(data = qualifications_df %>% dplyr::filter(label == "Qualified Audits"), 
+                            aes(x = label, y = .data[[minyear]], label = .data[[minyear]], colour = change > 0, vjust = ifelse(is_max_2025, 2, -1.5)),
+                            size = 6, fontface = "bold", show.legend = FALSE) +            
+                scale_colour_manual(values = c("TRUE" = "#8C5E58", "FALSE" = "#2E4B3C")) +
+                scale_shape_manual(name = NULL, values = setNames(c(1, 16), c(minyear_quote, "2024/25"))) +
+                labs(title = custom_title_qual,
+                        x = NULL, 
+                        y = "Frequency",
+                        caption = "substack.com/@onderstromings\n \nSource: Auditor General SA") +
+                scale_x_discrete(labels = label_exprs) +
+                scale_y_continuous(limits = c(0, 80), 
+                        expand = expansion(mult = c(0.05, 0.05))) +
+                guides(shape = guide_legend(override.aes = list(colour = "black")),
+                        colour = FALSE) +
+                substack_theme + 
+                theme(
+                # panel.grid.major.x = element_blank(),
+                # panel.grid.minor.x = element_blank(),
+                panel.grid.major.y = element_blank(),
+                panel.grid.minor.y = element_blank(),
+                text               = element_text(colour = "#1F2A24"),
+                axis.text          = element_text(colour = "#4A4460"),
+                axis.text.x          = element_text(colour = "#4A4460", 
+                                                    angle = 45,
+                                                    hjust = 1,
+                                                    vjust = 1),
+                legend.position    = "bottom",
+                legend.key.size    = unit(0.45, "cm"),
+                plot.margin        = margin(12, 16, 8, 12), 
+                plot.title        = element_text(colour = "#1F2A24", face = "plain", size = rel(1), margin = margin(b = 4), hjust = 0.5),
+                ) 
+
+qualification_plot
+
+qual_path <- paste0(output_dir, "/qualplot.png")
+
+
+png(filename = qual_path,
+        width = 1050,
+        height = 750,
+        res = 130)
+
+print(qualification_plot)
+dev.off()
 }
 
 
 ####
-## Findings on predetermined objectives
+## Findings on predetermined objectives and non-compliance
 ####
+
+lapply(colnames(findings_df), function(x) class(x))
 
 #Dumbbell plot comparing with 2020/21
 if (TRUE){
 
+findings_df <- audits_df %>%
+            dplyr::select(period, (dplyr::matches("^findings_on_predetermined_objectives|^findings_on_non_compliance|^findings") & 
+                        !dplyr::matches("quality_of_submitted_performance_reports|supply_chain_management|^outcomes_audit_opinion"))) %>%
+            dplyr::group_by(period) %>%
+            dplyr::filter(period %in% c(minyear, "2025")) %>%
+            dplyr::mutate(dplyr::across(dplyr::matches("^findings_on_"), as.numeric), 
+                            findings_yn = ifelse(findings > 0, 1, 0)
+                            ) %>%
+            dplyr::summarise(dplyr::across(dplyr::matches("^findings_|^outcomes_"), ~ sum(.x, na.rm = TRUE))) %>%
+            dplyr::rename_with(~ stringr::str_remove(.x , "^findings_on_predetermined_objectives_|^findings_on_non_compliance_|^findings_on_non-compliance_"), dplyr::matches("^findings_on")) %>%
+            dplyr::mutate(material_misstatement_or_limitations_in_submitted_afs = coalesce(
+                                material_misstatement_or_limitations_in_submitted_afs,
+                                material_misstatement_or_limitations_in_submitted_financial_statements
+                            ), 
+                            information_not_submitted_in_time_for_audit = coalesce(
+                                information_not_submitted_in_time_for_audit,
+                                information_not_submitted_in_time_for_auditing
+                            ), 
+                            underlying_records_planning_documents_not_submitted_for_audit = coalesce(
+                                underlying_records_planning_documents_not_submitted_for_audit, 
+                                underlying_records_planning_documents_not_submitted_for_auditing
+                            ), 
+                            unauthorised_irregular_as_well_as_fruitless_and_wasteful_expenditure = coalesce(
+                                unauthorised_irregular_as_well_as_fruitless_and_wasteful_expenditure, 
+                                unauthorised_irregular_and_fruitless_and_wasteful_expenditure
+                            ), 
+                            hr_management = coalesce(
+                                hr_management, 
+                                human_resource_management
+                            )) %>%
+            dplyr::select(-material_misstatement_or_limitations_in_submitted_financial_statements, 
+                        -information_not_submitted_in_time_for_auditing,
+                         -underlying_records_planning_documents_not_submitted_for_auditing,
+                         -unauthorised_irregular_and_fruitless_and_wasteful_expenditure, 
+                         -human_resource_management) %>%
+            tidyr::pivot_longer(cols = -period, 
+                                names_to = "label", 
+                                values_to = "value") %>%
+            dplyr::mutate(label = case_when(
+                                            label == "reported_information_not_useful" ~ "Reported Information Not Useful",
+                                            label == "reported_information_not_reliable" ~ "Reported Information Not Reliable",
+                                            label == "information_not_submitted_in_time_for_audit" ~ "Information Not Submitted in Time for Audit",
+                                            label == "no_annual_performance_report" ~ "No Annual Performance Report",
+                                            label == "underlying_records_planning_documents_not_submitted_for_audit" ~ "Underlying Records/Planning Documents Not Submitted",
+                                            label == "material_misstatement_or_limitations_in_submitted_afs" ~ "Material Misstatement or Limitations in Submitted AFS",
+                                            label == "unauthorised_irregular_as_well_as_fruitless_and_wasteful_expenditure" ~ "UIFWE",
+                                            label == "annual_financial_statements_and_annual_report" ~ "Annual Financial Statements and Annual Report",
+                                            label == "asset_management" ~ "Asset Management",
+                                            label == "liability_management" ~ "Liability Management",
+                                            label == "budgets" ~ "Budgets",
+                                            label == "expenditure_management" ~ "Expenditure Management",
+                                            label == "consequence_management" ~ "Consequence Management",
+                                            label == "audit_committees" ~ "Audit Committees",
+                                            label == "internal_audit" ~ "Internal Audit",
+                                            label == "revenue_management" ~ "Revenue Management",
+                                            label == "strategic_planning_and_performance_management" ~ "Strategic Planning and Performance Management",
+                                            label == "transfer_and_conditional_grants" ~ "Transfer and Conditional Grants",
+                                            label == "procurement_management" ~ "Procurement Management",
+                                            label == "hr_management" ~ "HR Management",
+                                            label == "environmental_management" ~ "Environmental Management",
+                                            label == "other" ~ "Other", 
+                                            label == "findings_yn" ~ "Audits with Findings"
+                                            )) %>%
+            dplyr::filter(label != "NA" | !is.na(label)) %>%
+            tidyr::pivot_wider(names_from = period,
+                                values_from = value) %>%
+            dplyr::filter(!(.data[[minyear]] == 0 & `2025` == 0)) %>%
+            dplyr::mutate(change = `2025` - .data[[minyear]], 
+                            maxval = pmax(.data[[minyear]], `2025`), 
+                            is_max_2022 = .data[[minyear]] > `2025`,
+                            is_max_2025 = `2025` > .data[[minyear]],
+                            label_findings = forcats::fct_reorder(label, maxval)) 
+
+
+label_exprs <- purrr::map(levels(findings_df$label_findings), function(l) {
+  if (l == "Audits with Findings") bquote(bold(.(l))) else l
+})
+
+custom_title_findings <- paste0("Change in Audit Findings, ",  minyear_quote ," - 2024/25")
+
+
+findings_plot <- ggplot() +
+                geom_segment(data = findings_df %>% dplyr::filter(label_findings != "Audits with Findings"), aes(x = label_findings, xend = label_findings, y = .data[[minyear]], yend = `2025`, colour = change > 0), 
+                                size = 2) + 
+                geom_point(data = findings_df %>% dplyr::filter(label_findings !=  "Audits with Findings"), aes(x = label_findings, y = .data[[minyear]], colour = change > 0, shape = minyear_quote), size = 4) +
+                geom_point(data = findings_df %>% dplyr::filter(label_findings != "Audits with Findings"), aes(x = label_findings, y = `2025`, colour = change > 0, shape = "2024/25"), size = 4) +
+                geom_text(data = findings_df %>% dplyr::filter(label_findings != "Audits with Findings"),
+                            aes(x = label_findings, y = `2025`, label = `2025`, colour = change > 0, vjust = ifelse(is_max_2022, 2, -1.5)),
+                            size = 4, show.legend = FALSE) +
+                geom_text(data = findings_df %>% dplyr::filter(label_findings != "Audits with Findings"), 
+                            aes(x = label_findings, y = .data[[minyear]], label = .data[[minyear]], colour = change > 0, vjust = ifelse(is_max_2025, 2, -1.5)),
+                            size = 4, show.legend = FALSE) +
+                geom_segment(data = findings_df %>% dplyr::filter(label_findings == "Audits with Findings"), aes(x = label_findings, xend = label_findings, y = .data[[minyear]], yend = `2025`, colour = change > 0), 
+                                size = 3) + 
+                geom_point(data = findings_df %>% dplyr::filter(label_findings == "Audits with Findings"), aes(x = label_findings, y = .data[[minyear]], colour = change > 0, shape = minyear_quote), size = 6) +
+                geom_point(data = findings_df %>% dplyr::filter(label_findings == "Audits with Findings"), aes(x = label_findings, y = `2025`, colour = change > 0, shape = "2024/25"), size = 6) +
+                geom_text(data = findings_df %>% dplyr::filter(label_findings == "Audits with Findings"),
+                            aes(x = label_findings, y = `2025`, label = `2025`, colour = change > 0, vjust = ifelse(is_max_2022, 2, -1.5)),
+                            size = 6, fontface = "bold", show.legend = FALSE) +
+                geom_text(data = findings_df %>% dplyr::filter(label_findings == "Audits with Findings"), 
+                            aes(x = label_findings, y = .data[[minyear]], label = .data[[minyear]], colour = change > 0, vjust = ifelse(is_max_2025, 2, -1.5)),
+                            size = 6, fontface = "bold", show.legend = FALSE) +            
+                scale_colour_manual(values = c("TRUE" = "#8C5E58", "FALSE" = "#2E4B3C")) +
+                scale_shape_manual(name = NULL, values = setNames(c(1, 16), c(minyear_quote, "2024/25"))) +
+                labs(title = custom_title_findings,
+                        x = NULL, 
+                        y = "Frequency",
+                        caption = "substack.com/@onderstromings\n \nSource: Auditor General SA") +
+                scale_x_discrete(labels = label_exprs) +
+                scale_y_continuous( expand = expansion(mult = c(0.05, 0.05))) +
+                guides(shape = guide_legend(override.aes = list(colour = "black")),
+                        colour = FALSE) +
+                substack_theme + 
+                theme(
+                # panel.grid.major.x = element_blank(),
+                # panel.grid.minor.x = element_blank(),
+                panel.grid.major.y = element_blank(),
+                panel.grid.minor.y = element_blank(),
+                text               = element_text(colour = "#1F2A24"),
+                axis.text          = element_text(colour = "#4A4460"),
+                axis.text.x          = element_text(colour = "#4A4460", 
+                                                    angle = 45,
+                                                    hjust = 1,
+                                                    vjust = 1),
+                legend.position    = "bottom",
+                legend.key.size    = unit(0.45, "cm"),
+                plot.margin        = margin(12, 16, 8, 12), 
+                plot.title        = element_text(colour = "#1F2A24", face = "plain", size = rel(1), margin = margin(b = 4), hjust = 0.5),
+                ) 
+
+findings_plot
+
+find_path <- paste0(output_dir, "/findplot.png")
+
+
+png(filename = find_path,
+        width = 1050,
+        height = 750,
+        res = 130)
+
+print(findings_plot)
+dev.off()
+}
+
+####
+## Performance by municipality
+####
+
+##Do a scatterplot with change in qualifications on Y and change in findings on X, with relative amount of quals as size
+
+##Create qualificaitons and findings seperately then join them. 
+
+if (TRUE){
+
+zscore <- function(col) {
+    mean_temp <- mean(col, na.rm = TRUE)
+    sd_temp <- sd(col, na.rm = TRUE)
+
+    return((col - mean_temp) / sd_temp)
 
 }
 
+quals_full <- audits_df %>%
+            dplyr::filter(period %in% c(minyear, "2025")) %>%
+            dplyr::select(demarcation.code, period, qualifications, dplyr::matches("^financial_statement_qualification_areas")) %>%
+            dplyr::rename_with( ~ stringr::str_remove(.x, "financial_statement_qualification_areas_"), dplyr::matches("^financial_statement_qualification_areas_")) %>%
+            dplyr::mutate(uifwe = dplyr::coalesce(unauthorised_irregular_as_well_as_fruitless_and_wasteful_expenditure, 
+                                    unauthorised_irregular_and_fruitless_and_wasteful_expenditure)) %>%
+            dplyr::select(-unauthorised_irregular_as_well_as_fruitless_and_wasteful_expenditure, 
+                                    - unauthorised_irregular_and_fruitless_and_wasteful_expenditure) %>%
+            tidyr::pivot_longer(cols = c(-period, -demarcation.code), 
+                                names_to = "label", 
+                                values_to = "value") %>%
+            dplyr::mutate(label = case_when(
+                                            label == "qualified" ~ "Qualified Audits", 
+                                            label == "non_current_assets" ~ "Non-current Assets", 
+                                            label == "current_assets" ~ "Current Assets", 
+                                            label == "liabilities" ~ "Liabilities", 
+                                            label == "capital_and_reserves" ~ "Capital and Reserves", 
+                                            label == "other_disclosure_items" ~ "Other Disclosure Items", 
+                                            label == "revenue" ~ "Revenue", 
+                                            label == "expenditure" ~ "Expenditure", 
+                                            label == "aggregate_misstatements" ~ "Aggregate Misstatements", 
+                                            label == "cash_flow_statements" ~ "Cash Flow Statements", 
+                                            label == "uifwe" ~ "UIFWE",
+                                            TRUE ~ label
+                                            )) %>%
+            tidyr::pivot_wider(id_cols = c(demarcation.code, period),
+                                names_from = label, 
+                                values_from = value) 
+
+performance_df <- quals_full %>%
+        dplyr::select(demarcation.code, period, qualifications) %>%
+        tidyr::pivot_wider(names_from = period, 
+                            values_from = qualifications) %>%
+        dplyr::mutate(chg_qual = ((`2025` - .data[[minyear]]) / .data[[minyear]]) * 100,
+                    zs_qual = zscore(.data[[minyear]]))
+
+performance_df <- performance_df %>%
+            dplyr::mutate(chg_qual = dplyr::case_when(.data[[minyear]] == 0 & `2025` != 0   ~ max(is.finite(performance_df$chg_qual)) + 5,
+                                                        .data[[minyear]] == 0 & `2025` == 0   ~ 0,
+                                                TRUE ~ chg_qual))
+
+    
+                                
+                                
+                                %>%
+            dplyr::mutate(change = `2025` - .data[[minyear]], 
+                            maxval = pmax(.data[[minyear]], `2025`), 
+                            is_max_2022 = .data[[minyear]] > `2025`,
+                            is_max_2025 = `2025` > .data[[minyear]],
+                            label = forcats::fct_reorder(label, maxval)) 
 
 
-####
-## Findings on predetermined objectives
-####
 
-#Dumbbell plot comparing with 2020/21
-if (TRUE){
 
 
 }
