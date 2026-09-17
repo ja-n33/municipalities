@@ -142,7 +142,6 @@ munic_list <- left_join(munic_census, munic_names, by  = c("dem_code" = "demarca
 
 if (TRUE){
 
-
 fy_annexures <- c()
 df_list <- list()
 
@@ -209,12 +208,6 @@ for (fy in c("2021", "2122", "2223", "2324", "2425")){
 
     fy_annexures <- dplyr::bind_rows(fy_annexures, temp_data) 
 }
-
-view24 <- df_list[["2024"]]
-
-view25 <- df_list[["2025"]]
-
-
 
 fy_annexures <- fy_annexures %>%
     dplyr::mutate(auditee = case_when(
@@ -374,6 +367,7 @@ audits_df <- dplyr::left_join(annexures_df, audop_nt, by = c("period", "demarcat
                             TRUE ~ outcomes_audit_opinion
                         ), 
                             qualified = ifelse(stringr::str_detect(outcomes_audit_opinion_i, "^Qualified"), 1, 0)) 
+                
 
 look <- audits_df %>%
         dplyr::filter(outcomes_audit_opinion_i == "Unqualified with no findings" & period == "2025") %>%
@@ -402,7 +396,7 @@ line_df <- audits_df %>%
             dplyr::select(outcomes_audit_opinion_i, period) %>%
             dplyr::group_by(period, outcomes_audit_opinion_i, .drop = FALSE) %>%
             dplyr::summarise(opinions = dplyr::n()) %>%
-            dplyr::filter(as.numeric(period) > 2021) %>%
+            dplyr::filter(as.numeric(period) > 2020) %>%
             dplyr::mutate(period = as.numeric(period)) %>%
             dplyr::rename(label = outcomes_audit_opinion_i, 
                             value = opinions) 
@@ -482,11 +476,14 @@ unqual_rank <- audits_df %>%
   dplyr::arrange(recent_score, weighted_score)
 
 tile_df <- audits_df %>%
+        dplyr::select(-demarcation.label) %>%
+        dplyr::left_join(munic_list %>% dplyr::select(demarcation.code, demarcation.label), by = "demarcation.code") %>%
         dplyr::mutate(outcomes_audit_opinion = factor(outcomes_audit_opinion_i, levels = opinion_order), 
                 demarcation.code = factor(demarcation.code, unqual_rank$demarcation.code), 
                 demarcation.code = forcats::fct_rev(demarcation.code)) 
+        
 
-tileplot <- ggplot(data = tile_df, aes(x = period, y = demarcation.code, fill = outcomes_audit_opinion_i)) +
+tileplot <- ggplot(data = tile_df, aes(x = period, y = demarcation.code, fill = outcomes_audit_opinion_i, text = paste0(demarcation.label, "<br>", period, ": ", outcomes_audit_opinion))) +
         geom_tile() +
         scale_fill_manual(values = label_colour_map, breaks = names(label_colour_map)) +
         scale_x_discrete(
@@ -494,14 +491,34 @@ tileplot <- ggplot(data = tile_df, aes(x = period, y = demarcation.code, fill = 
                 labels = function(x) paste0(as.numeric(x) - 1, "/", as.numeric((stringr::str_sub(as.character(x), start = 3, end = 4)))), 
                 expand = expansion(mult = c(0, 0))) + 
         labs(title = "Audit Outcomes by Municipality, 2020/21 - 2024/25",
-            x = "Financial Year", y = NULL, fill = "Audit Opinion",
-            caption = caption = "substack.com/@onderstromings\n \nSource: Auditor General SA") +
+            x = "Financial Year", y = NULL, fill = NULL,
+            caption =  "substack.com/@onderstromings\n \nSource: Auditor General SA") +
         substack_theme +
-        theme(axis.text.y = element_blank())
+        theme(axis.text.y = element_blank(), 
+                legend.title = element_blank())
 
 tileplot
 
-tile_path <- paste0(output_dir, "/tileplot.png")
+## make interactive
+
+tileplot_hover <- plotly::ggplotly(tileplot, tooltip = "text") %>%
+                plotly::layout(
+    annotations = list(
+      list(
+        text = "  substack.com/@onderstromings<br>Source: Auditor General SA",
+        showarrow = FALSE,
+        xref = "paper", yref = "paper",
+        x = 0, y = -0.08,
+        xanchor = "left", yanchor = "top",
+        font = list(size = 10, color = "#8C8C8C")
+      )
+    )
+  )
+
+
+tileplot_hover
+
+tile_path <- paste0(output_dir, "/tileplot.png") 
 
 
 png(filename = tile_path,
@@ -511,6 +528,18 @@ png(filename = tile_path,
 
 print(tileplot)
 dev.off()
+
+
+## make interactive
+
+tileplot_hover <- plotly::ggplotly(tileplot, tooltip = "text")
+
+tileplot_hover
+
+tile_html_path <- paste0(output_dir, "/tileplot.html")
+
+
+htmlwidgets::saveWidget(tileplot_hover, file = tile_html_path, selfcontained = TRUE)
 
 }
 
@@ -624,7 +653,7 @@ qual_path <- paste0(output_dir, "/qualplot.png")
 png(filename = qual_path,
         width = 1050,
         height = 750,
-        res = 130)
+        res = 110)
 
 print(qualification_plot)
 dev.off()
@@ -635,7 +664,6 @@ dev.off()
 ## Findings on predetermined objectives and non-compliance
 ####
 
-lapply(colnames(findings_df), function(x) class(x))
 
 #Dumbbell plot comparing with 2020/21
 if (TRUE){
@@ -737,10 +765,10 @@ findings_plot <- ggplot() +
                 geom_point(data = findings_df %>% dplyr::filter(label_findings == "Audits with Findings"), aes(x = label_findings, y = .data[[minyear]], colour = change > 0, shape = minyear_quote), size = 6) +
                 geom_point(data = findings_df %>% dplyr::filter(label_findings == "Audits with Findings"), aes(x = label_findings, y = `2025`, colour = change > 0, shape = "2024/25"), size = 6) +
                 geom_text(data = findings_df %>% dplyr::filter(label_findings == "Audits with Findings"),
-                            aes(x = label_findings, y = `2025`, label = `2025`, colour = change > 0, vjust = ifelse(is_max_2022, 2, -1.5)),
+                            aes(x = label_findings, y = `2025`, label = `2025`, colour = change > 0, vjust = ifelse(is_max_2022, 2, -1)),
                             size = 6, fontface = "bold", show.legend = FALSE) +
                 geom_text(data = findings_df %>% dplyr::filter(label_findings == "Audits with Findings"), 
-                            aes(x = label_findings, y = .data[[minyear]], label = .data[[minyear]], colour = change > 0, vjust = ifelse(is_max_2025, 2, -1.5)),
+                            aes(x = label_findings, y = .data[[minyear]], label = .data[[minyear]], colour = change > 0, vjust = ifelse(is_max_2025, 2, -1)),
                             size = 6, fontface = "bold", show.legend = FALSE) +            
                 scale_colour_manual(values = c("TRUE" = "#8C5E58", "FALSE" = "#2E4B3C")) +
                 scale_shape_manual(name = NULL, values = setNames(c(1, 16), c(minyear_quote, "2024/25"))) +
@@ -749,7 +777,7 @@ findings_plot <- ggplot() +
                         y = "Frequency",
                         caption = "substack.com/@onderstromings\n \nSource: Auditor General SA") +
                 scale_x_discrete(labels = label_exprs) +
-                scale_y_continuous( expand = expansion(mult = c(0.05, 0.05))) +
+                scale_y_continuous( expand = expansion(mult = c(0.14, 0.14))) +
                 guides(shape = guide_legend(override.aes = list(colour = "black")),
                         colour = FALSE) +
                 substack_theme + 
@@ -778,7 +806,7 @@ find_path <- paste0(output_dir, "/findplot.png")
 png(filename = find_path,
         width = 1050,
         height = 750,
-        res = 130)
+        res = 100)
 
 print(findings_plot)
 dev.off()
@@ -831,32 +859,272 @@ quals_full <- audits_df %>%
                                 names_from = label, 
                                 values_from = value) 
 
-performance_df <- quals_full %>%
-        dplyr::select(demarcation.code, period, qualifications) %>%
+findings_full <- audits_df %>%
+                dplyr::filter(period %in% c(as.character(minyear), "2025")) %>%
+                dplyr::select(period, demarcation.code, findings, outcomes_audit_opinion_i, (dplyr::matches("^findings_on_predetermined_objectives|^findings_on_non_compliance|^findings") & 
+                        !dplyr::matches("quality_of_submitted_performance_reports|supply_chain_management|^outcomes_audit_opinion"))) %>%
+                dplyr::group_by(demarcation.code) %>%
+                dplyr::mutate(outcome_2025 = dplyr::first(outcomes_audit_opinion_i[period == "2025"], default = NA_character_)) %>%
+                dplyr::ungroup() %>%
+                dplyr::rename_with(~ stringr::str_remove(.x , "^findings_on_predetermined_objectives_|^findings_on_non_compliance_|^findings_on_non-compliance_"), dplyr::matches("^findings_on")) %>%
+                dplyr::mutate(material_misstatement_or_limitations_in_submitted_afs = coalesce(
+                                        material_misstatement_or_limitations_in_submitted_afs,
+                                        material_misstatement_or_limitations_in_submitted_financial_statements
+                                ), 
+                                information_not_submitted_in_time_for_audit = coalesce(
+                                        information_not_submitted_in_time_for_audit,
+                                        information_not_submitted_in_time_for_auditing
+                                ), 
+                                underlying_records_planning_documents_not_submitted_for_audit = coalesce(
+                                        underlying_records_planning_documents_not_submitted_for_audit, 
+                                        underlying_records_planning_documents_not_submitted_for_auditing
+                                ), 
+                                unauthorised_irregular_as_well_as_fruitless_and_wasteful_expenditure = coalesce(
+                                        unauthorised_irregular_as_well_as_fruitless_and_wasteful_expenditure, 
+                                        unauthorised_irregular_and_fruitless_and_wasteful_expenditure
+                                ), 
+                                hr_management = coalesce(
+                                        hr_management, 
+                                        human_resource_management
+                                )) %>%
+                dplyr::select(-material_misstatement_or_limitations_in_submitted_financial_statements, 
+                                -information_not_submitted_in_time_for_auditing,
+                                -underlying_records_planning_documents_not_submitted_for_auditing,
+                                -unauthorised_irregular_and_fruitless_and_wasteful_expenditure, 
+                                -human_resource_management,
+                                -outcomes_audit_opinion_i) %>%
+                tidyr::pivot_longer(cols = c(-period, -demarcation.code, -outcome_2025), 
+                                        names_to = "label", 
+                                        values_to = "value") %>%
+                dplyr::mutate(label = case_when(
+                                                label == "reported_information_not_useful" ~ "Reported Information Not Useful",
+                                                label == "reported_information_not_reliable" ~ "Reported Information Not Reliable",
+                                                label == "information_not_submitted_in_time_for_audit" ~ "Information Not Submitted in Time for Audit",
+                                                label == "no_annual_performance_report" ~ "No Annual Performance Report",
+                                                label == "underlying_records_planning_documents_not_submitted_for_audit" ~ "Underlying Records/Planning Documents Not Submitted",
+                                                label == "material_misstatement_or_limitations_in_submitted_afs" ~ "Material Misstatement or Limitations in Submitted AFS",
+                                                label == "unauthorised_irregular_as_well_as_fruitless_and_wasteful_expenditure" ~ "UIFWE",
+                                                label == "annual_financial_statements_and_annual_report" ~ "Annual Financial Statements and Annual Report",
+                                                label == "asset_management" ~ "Asset Management",
+                                                label == "liability_management" ~ "Liability Management",
+                                                label == "budgets" ~ "Budgets",
+                                                label == "expenditure_management" ~ "Expenditure Management",
+                                                label == "consequence_management" ~ "Consequence Management",
+                                                label == "audit_committees" ~ "Audit Committees",
+                                                label == "internal_audit" ~ "Internal Audit",
+                                                label == "revenue_management" ~ "Revenue Management",
+                                                label == "strategic_planning_and_performance_management" ~ "Strategic Planning and Performance Management",
+                                                label == "transfer_and_conditional_grants" ~ "Transfer and Conditional Grants",
+                                                label == "procurement_management" ~ "Procurement Management",
+                                                label == "hr_management" ~ "HR Management",
+                                                label == "environmental_management" ~ "Environmental Management",
+                                                label == "other" ~ "Other", 
+                                                label == "findings_yn" ~ "Audits with Findings",
+                                                label == "findings" ~ "n_findings"
+                                                )) %>%
+                dplyr::filter(label != "NA" | !is.na(label)) %>%
+                tidyr::pivot_wider(id_cols = c(demarcation.code, period, outcome_2025),
+                                        names_from = label,
+                                        values_from = value) 
+
+performance_df <- left_join(quals_full, findings_full, by = c("demarcation.code", "period")) %>%
+        dplyr::select(demarcation.code, period, qualifications, n_findings, outcome_2025) %>%
         tidyr::pivot_wider(names_from = period, 
-                            values_from = qualifications) %>%
-        dplyr::mutate(chg_qual = ((`2025` - .data[[minyear]]) / .data[[minyear]]) * 100,
-                    zs_qual = zscore(.data[[minyear]]))
+                            values_from = c(qualifications, n_findings)) %>%
+        dplyr::mutate(chg_qual = (qualifications_2025 - .data[[paste0("qualifications_", minyear)]]),
+                    zs_qual  = as.numeric(scale(.data[[paste0("qualifications_", minyear)]])),
+                    chg_findings = (n_findings_2025 - .data[[paste0("n_findings_", minyear)]]),
+                    zs_findings  = as.numeric(scale(.data[[paste0("n_findings_", minyear)]])),
+                )
 
 performance_df <- performance_df %>%
-            dplyr::mutate(chg_qual = dplyr::case_when(.data[[minyear]] == 0 & `2025` != 0   ~ max(is.finite(performance_df$chg_qual)) + 5,
-                                                        .data[[minyear]] == 0 & `2025` == 0   ~ 0,
-                                                TRUE ~ chg_qual))
+            dplyr::mutate(dplyr::across(c(chg_qual, chg_findings), ~ {
+                max_finite <- max(.x[is.finite(.x)], na.rm = TRUE)
+                dplyr::case_when(is.na(.x) ~ 0,
+                                is.infinite(.x) ~ max_finite + 100, 
+                                TRUE ~ .x)})) %>%
+                left_join(munic_list %>% dplyr::select(demarcation.code, demarcation.label),  by = "demarcation.code")
 
-    
-                                
-                                
-                                %>%
-            dplyr::mutate(change = `2025` - .data[[minyear]], 
-                            maxval = pmax(.data[[minyear]], `2025`), 
-                            is_max_2022 = .data[[minyear]] > `2025`,
-                            is_max_2025 = `2025` > .data[[minyear]],
-                            label = forcats::fct_reorder(label, maxval)) 
+##I flipped the signs so that right and top are good
+
+scatterplot <- ggplot(data = performance_df, aes(x = chg_qual, y = chg_findings, colour = outcome_2025, text = ifelse(outcome_2025 != "Audit not finalised at legislated date", paste0(demarcation.label, " (", demarcation.code, ")", "<br>", " 2024/25 Audit Opinion : ", outcome_2025, "<br>", "Qualifications : ", qualifications_2025, " (", qualifications_2021, ")", "<br>", "Findings : ", n_findings_2025, " (", n_findings_2021, ")"), paste0(demarcation.label, " (", demarcation.code, ")", "<br>", " 2024/25 Audit Opinion : ", outcome_2025, "<br>", "Qualifications : NA (", qualifications_2021, ")", "<br>", "Findings : NA (", n_findings_2021, ")")))) +
+                geom_hline(yintercept = 0, linewidth = 0.75, colour = "#2E4B3C", linetype = "dashed") +
+                geom_vline(xintercept = 0, linewidth = 0.75, colour = "#2E4B3C", , linetype = "dashed") + 
+                geom_point(aes(size = (n_findings_2021 + 5) * (qualifications_2021 + 5), colour = outcome_2025), alpha = 0.75, position = position_jitter(width = 0.2, height = 0.3), show.legend = FALSE) +
+                scale_size_area(max_size = 12) +
+                scale_x_continuous(breaks = scales::pretty_breaks(n = 6), 
+                                expand = c(0.05, 0.05)) +
+                scale_y_continuous(breaks = scales::pretty_breaks(n = 6), 
+                                expand = c(0.05, 0.05)) +
+                scale_colour_manual(values = label_colour_map) +
+                labs(title = "Change in Qualifications and Findings by Municipalities,\n2020/21 - 2024/25", 
+                x = "Change in Qualifications", 
+                y = "Change in Findings", 
+                caption = "substack.com/@onderstromings\n \nSource: Auditor General SA\nNote: Right and top quadrants indicate deteriorations, larger dots reflect initial number of findings and qualifications") +
+                substack_theme +
+                theme(
+                panel.grid.major.x = element_blank(),
+                # panel.grid.minor.x = element_blank(),
+                # panel.grid.major.y = element_blank(),
+                panel.grid.minor.y = element_blank(),
+                text               = element_text(colour = "#1F2A24"),
+                # axis.text          = element_text(colour = "#4A4460"),
+                # axis.text.x          = element_text(colour = "#4A4460", 
+                #                                     angle = 45,
+                #                                     hjust = 1,
+                #                                     vjust = 1),
+                legend.position    = "bottom",
+                legend.key.size    = unit(0.45, "cm"),
+                plot.margin        = margin(12, 16, 8, 12), 
+                ) 
+
+scatterplot
+
+scatter_path <- paste0(output_dir, "/scatterplot.png")
 
 
+png(filename = scatter_path,
+        width = 950,
+        height = 850,
+        res = 130)
 
+print(scatterplot)
+dev.off()
+
+scatter_hover <- plotly::ggplotly(scatterplot, tooltip = "text") %>%
+        plotly::layout(
+    annotations = list(
+      list(
+        text = "  substack.com/@onderstromings<br>Source: Auditor General SA<br>Note: Right and top quadrants indicate deteriorations, larger dots reflect initial number of findings and qualifications",
+        showarrow = FALSE,
+        xref = "paper", yref = "paper",
+        x = 0, y = -0.30,
+        xanchor = "left", yanchor = "top",
+        font = list(size = 10, color = "#8C8C8C")
+      )
+    )
+  )
+
+scatter_hover
+
+hover_path <- paste0(output_dir, "/tileplot_hover.html")
+
+scatter_html_path <- paste0(output_dir, "/scatterplot.html")
+htmlwidgets::saveWidget(tileplot_hover, file = scatter_html_path, selfcontained = TRUE)
 
 
 }
 
 
+####
+## GeoMap
+####
+
+
+if (TRUE){
+
+# Leaves will bt coloured by 24/25 outcome and contain     1) Municipality Name
+#                         2) 2020/21 OUTCOME, QUALIFICATIONS, FINDINGS
+#                         3) 2021/22 OUTCOME, QUALIFICATIONS, FINDINGS
+#                         4) 2022/23 OUTCOME, QUALIFICATIONS, FINDINGS
+#                         5) 2023/24 OUTCOME, QUALIFICATIONS, FINDINGS
+#                         6) 2024/25 OUTCOME, QUALIFICATIONS, FINDINGS
+                          
+map_resp <- httr::GET("https://services7.arcgis.com/oeoyTUJC8HEeYsRB/arcgis/rest/services/LocalMunicipalities2018_Final/FeatureServer/0/query?where=1%3D1&outFields=*&outSR=4326&f=geojson")
+
+writeLines(httr::content(map_resp, "text", encoding = "UTF-8"), here::here("data", "munic_map.geojson"))
+
+map <- sf::st_read(here::here("data", "munic_map.geojson")) %>%
+                dplyr::select(CAT_B, DATE, Shape__Area, Shape__Length, geometry) %>%
+                dplyr::rename(demarcation.code = CAT_B)
+
+
+map_df_data <- audits_df %>%
+        dplyr::select(demarcation.code, period, findings, qualifications, outcomes_audit_opinion_i) %>%
+        dplyr::rename(outcome = outcomes_audit_opinion_i) %>%
+                tidyr::pivot_wider(
+                        id_cols = demarcation.code, 
+                        names_from = period,
+                        values_from = c(findings, qualifications, outcome)
+                )
+
+map_df <- dplyr::left_join(dplyr::left_join(map_df_data, map, by = "demarcation.code"), munic_list %>% dplyr::select(demarcation.code, demarcation.label), by = "demarcation.code")  
+                
+pal <- leaflet::colorFactor(
+  palette = unname(label_colour_map),
+  levels = names(label_colour_map)
+)
+
+leaf_info <- list()
+
+for (i in c(2021:2025)){
+
+        i_char <- as.character(i)
+
+        outcome <- paste0("outcome_", i_char)
+        qualifications <- paste0("qualifications_", i_char)
+        findings <- paste0("findings_", i_char)
+
+        year <- paste0(as.character(i - 1), "/", stringr::str_sub(i_char, -2, -1))
+        
+        leaf_info[[i_char]] <- ifelse(map_df[[outcome]] != "Audit not finalised at legislated date",
+                 paste0(
+        "<b>", year , "</b><br>",
+        "&nbsp;&nbsp;&nbsp;Audit Opinion: ", map_df[[outcome]], "<br>",
+        "&nbsp;&nbsp;&nbsp;Qualifications: ", map_df[[qualifications]], "<br>",
+        "&nbsp;&nbsp;&nbsp;Findings: ", map_df[[findings]], "<br>"),
+                paste0(
+        "<b>", year , "</b><br>",
+        "&nbsp;&nbsp;&nbsp;Audit Opinion: ", map_df[[outcome]], "<br>",
+        "&nbsp;&nbsp;&nbsp;Qualifications: NA", "<br>",
+        "&nbsp;&nbsp;&nbsp;Findings: NA", "<br>"))
+
+
+}
+
+combined_labels <- purrr::pmap_chr(leaf_info, paste0)
+
+interact_map <- leaflet(
+                map_df %>%
+                st_as_sf()
+                ) %>%
+        addPolygons(
+                fillColor = ~pal(outcome_2025),
+                weight = 1, 
+                color = "white",
+                fillOpacity = 0.75,
+                highlightOptions = highlightOptions(
+                        weight = 2,
+                        color = "black",
+                        fillOpacity = 0.9, 
+                        bringToFront = TRUE
+                ),
+                label = ~lapply(paste0(
+  "<b>", demarcation.label, "</b><br>", combined_labels)
+  , htmltools::HTML),
+        labelOptions = labelOptions(
+        style = list("font-weight" = "normal", padding = "6px 8px"),
+        textsize = "13px",
+        direction = "auto"
+        )
+        ) %>%
+        addLegend(
+                 pal = pal,
+                values = ~outcome_2025,
+                title = "2024/25 Audit Opinion",
+                position = "bottomright") %>%
+        htmlwidgets::onRender("
+    function(el, x) {
+      this.getContainer().style.background = '#EDE8DA';
+    }
+  ")
+
+interact_map
+
+
+filepath_html <- paste0(output_dir, "/audit_map.html")
+htmlwidgets::saveWidget(interact_map, file = filepath_html, selfcontained = TRUE)
+
+filepath_png <- paste0(output_dir, "/audit_map.png")
+webshot2::webshot(filepath_html, file = filepath_png, cliprect = "viewport")
+}
