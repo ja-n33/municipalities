@@ -2,6 +2,8 @@ pacman::p_load(dplyr, httr, jsonlite, ggplot2, sf, leaflet, scales, cowplot, mag
 
 output_dir <- here::here("audit_outcomes", "output")
 
+git_dir <- "/Users/jansmuts/municipalitymonitor_3/"
+
 ifelse(dir.exists(file.path(output_dir)), print("Path Exists"), 
                 dir.create(file.path(output_dir), recursive = TRUE))
 
@@ -1125,6 +1127,49 @@ interact_map
 filepath_html <- paste0(output_dir, "/audit_map.html")
 htmlwidgets::saveWidget(interact_map, file = filepath_html, selfcontained = TRUE)
 
+
+
 filepath_png <- paste0(output_dir, "/audit_map.png")
 webshot2::webshot(filepath_html, file = filepath_png, cliprect = "viewport")
+}
+
+
+####
+## Make HTMLs Visual
+####
+
+plot_meta <- list(
+  audit_map = list(
+    title = "Municipal Audit Outcomes Map",
+    description = "Interactive map of municipal audit opinions, 2020/21-2024/25",
+    image = "preview_map.png"
+  ),
+  scatterplot = list(
+    title = "Change in Qualifications and Findings by Municipality",
+    description = "Interactive scatter plot of audit outcome trends, 2020/21-2024/25",
+    image = "preview_scatter.png"
+  ),
+  tileplot = list(
+    title = "Audit Outcomes by Municipality, 2020/21-2024/25",
+    description = "Interactive tile plot of municipal audit opinions over five years",
+    image = "preview_tileplot.png"
+  )
+)
+
+for (pl in names(plot_meta)) {
+  path_in  <- paste0(output_dir, "/", pl, ".html")
+  path_out <- paste0(output_dir,"/", pl, "_vis.html")
+
+  html_content <- readLines(path_in)
+  head_line <- grep("<head>", html_content)[1]
+
+  meta <- plot_meta[[pl]]
+  og_tags <- c(
+    sprintf('<meta property="og:title" content="%s" />', meta$title),
+    sprintf('<meta property="og:description" content="%s" />', meta$description),
+    sprintf('<meta property="og:image" content="https://ja-n33.github.io/municipalitymonitor_3/%s" />', meta$image),
+    sprintf('<meta property="og:url" content="https://ja-n33.github.io/municipalitymonitor_3/%s_vis.html" />', pl)
+  )
+
+  writeLines(append(html_content, og_tags, after = head_line), path_out)
 }
