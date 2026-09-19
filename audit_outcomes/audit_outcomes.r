@@ -418,28 +418,30 @@ if (TRUE){
 line_plot <- ggplot(data = line_df, aes(x = period, y = value, group = label, colour = label)) +
         geom_line(linewidth = 2.5) +
         geom_point(size = 2.5, shape = 15) +
-        geom_text(aes(label = value, hjust = ifelse(period != max(line_df$period), -0.5, 1.5)), vjust = - 2, size = 3, show.legend = FALSE) +
+        ggrepel::geom_text_repel(aes(label = value, hjust =  -0.5, vjust = - 1.5), size = 3, show.legend = FALSE, direction = "y", segment.color = NA) +
         scale_colour_manual(values = label_colour_map) +
         guides(colour = guide_legend(reverse = TRUE)) +
         scale_y_continuous(breaks = scales::breaks_pretty(n = 6),
                         labels  = function(x) ifelse(x == 0, "", x), 
-                        expand = expansion(mult = c(0.001, 0.05))) +
+                        expand = expansion(mult = c(0.001, 0.1))) +
         scale_x_continuous(
                 breaks =  c(min(line_df$period):max(line_df$period)),
                 labels = function(x) paste0(as.numeric(x) - 1, "/", as.numeric((stringr::str_sub(as.character(x), start = 3, end = 4)))), 
-                expand = expansion(mult = c(0, 0))) + 
+                expand = expansion(mult = c(0.01, 0.08))) + 
         labs(title = "Audit Opinions, 2020/21 - 2024/25", 
             x = "Financial Year",
             y = "Number of Municipalities", 
             caption = "Source: Auditor General SA") +
-        substack_theme
+        substack_theme + 
+        theme(panel.grid.major.x = element_blank(), 
+                panel.grid.major.y = element_blank())
 
 line_plot
 line_path <- paste0(output_dir, "/lineplot.png")
 
 
 png(filename = line_path,
-        width = 950,
+        width = 1150,
         height = 650,
         res = 130)
 print(line_plot)
@@ -485,7 +487,7 @@ tile_df <- audits_df %>%
                 demarcation.code = forcats::fct_rev(demarcation.code)) 
         
 
-tileplot <- ggplot(data = tile_df, aes(x = period, y = demarcation.code, fill = outcomes_audit_opinion_i, text = paste0(demarcation.label, "<br>", period, ": ", outcomes_audit_opinion))) +
+tileplot <- ggplot(data = tile_df, aes(x = period, y = demarcation.code, fill = outcomes_audit_opinion_i, text = paste0(demarcation.label, " (", demarcation.code, ")", "<br>", period, ": ", outcomes_audit_opinion))) +
         geom_tile() +
         scale_fill_manual(values = label_colour_map, breaks = names(label_colour_map)) +
         scale_x_discrete(
@@ -778,7 +780,7 @@ findings_plot <- ggplot() +
                         x = NULL, 
                         y = "Frequency",
                         caption = "substack.com/@onderstromings\n \nSource: Auditor General SA") +
-                scale_x_discrete(labels = label_exprs) +
+                scale_x_discrete(labels = label_exprs, expand = expansion(mult = c(0.15, 0.05))) +
                 scale_y_continuous( expand = expansion(mult = c(0.14, 0.14))) +
                 guides(shape = guide_legend(override.aes = list(colour = "black")),
                         colour = FALSE) +
@@ -866,7 +868,8 @@ findings_full <- audits_df %>%
                 dplyr::select(period, demarcation.code, findings, outcomes_audit_opinion_i, (dplyr::matches("^findings_on_predetermined_objectives|^findings_on_non_compliance|^findings") & 
                         !dplyr::matches("quality_of_submitted_performance_reports|supply_chain_management|^outcomes_audit_opinion"))) %>%
                 dplyr::group_by(demarcation.code) %>%
-                dplyr::mutate(outcome_2025 = dplyr::first(outcomes_audit_opinion_i[period == "2025"], default = NA_character_)) %>%
+                dplyr::mutate(outcome_2025 = dplyr::first(outcomes_audit_opinion_i[period == "2025"], default = NA_character_), 
+                                outcome_2021 = dplyr::first(outcomes_audit_opinion_i[period == "2021"], default = NA_character_)) %>%
                 dplyr::ungroup() %>%
                 dplyr::rename_with(~ stringr::str_remove(.x , "^findings_on_predetermined_objectives_|^findings_on_non_compliance_|^findings_on_non-compliance_"), dplyr::matches("^findings_on")) %>%
                 dplyr::mutate(material_misstatement_or_limitations_in_submitted_afs = coalesce(
@@ -895,7 +898,7 @@ findings_full <- audits_df %>%
                                 -unauthorised_irregular_and_fruitless_and_wasteful_expenditure, 
                                 -human_resource_management,
                                 -outcomes_audit_opinion_i) %>%
-                tidyr::pivot_longer(cols = c(-period, -demarcation.code, -outcome_2025), 
+                tidyr::pivot_longer(cols = c(-period, -demarcation.code, -outcome_2025, -outcome_2021), 
                                         names_to = "label", 
                                         values_to = "value") %>%
                 dplyr::mutate(label = case_when(
@@ -925,19 +928,21 @@ findings_full <- audits_df %>%
                                                 label == "findings" ~ "n_findings"
                                                 )) %>%
                 dplyr::filter(label != "NA" | !is.na(label)) %>%
-                tidyr::pivot_wider(id_cols = c(demarcation.code, period, outcome_2025),
+                tidyr::pivot_wider(id_cols = c(demarcation.code, period, outcome_2025, outcome_2021),
                                         names_from = label,
                                         values_from = value) 
 
 performance_df <- left_join(quals_full, findings_full, by = c("demarcation.code", "period")) %>%
-        dplyr::select(demarcation.code, period, qualifications, n_findings, outcome_2025) %>%
+        dplyr::select(demarcation.code, period, qualifications, n_findings, outcome_2025, outcome_2021) %>%
         tidyr::pivot_wider(names_from = period, 
                             values_from = c(qualifications, n_findings)) %>%
         dplyr::mutate(chg_qual = (qualifications_2025 - .data[[paste0("qualifications_", minyear)]]),
                     zs_qual  = as.numeric(scale(.data[[paste0("qualifications_", minyear)]])),
                     chg_findings = (n_findings_2025 - .data[[paste0("n_findings_", minyear)]]),
                     zs_findings  = as.numeric(scale(.data[[paste0("n_findings_", minyear)]])),
-                )
+                ) %>%
+        dplyr::filter(outcome_2025 != "Audit not finalised at legislated date", 
+                        outcome_2021 != "Audit not finalised at legislated date")
 
 performance_df <- performance_df %>%
             dplyr::mutate(dplyr::across(c(chg_qual, chg_findings), ~ {
@@ -962,7 +967,7 @@ scatterplot <- ggplot(data = performance_df, aes(x = chg_qual, y = chg_findings,
                 labs(title = "Change in Qualifications and Findings by Municipalities,\n2020/21 - 2024/25", 
                 x = "Change in Qualifications", 
                 y = "Change in Findings", 
-                caption = "substack.com/@onderstromings\n \nSource: Auditor General SA\nNote: Right and top quadrants indicate deteriorations, larger dots reflect initial number of findings and qualifications") +
+                caption = "substack.com/@onderstromings\n \nSource: Auditor General SA\nNote: Municipalities that did not submit in time for either 2021 or 2025 were excluded.") +
                 substack_theme +
                 theme(
                 panel.grid.major.x = element_blank(),
@@ -1009,10 +1014,10 @@ scatter_hover <- plotly::ggplotly(scatterplot, tooltip = "text") %>%
 
 scatter_hover
 
-hover_path <- paste0(output_dir, "/tileplot_hover.html")
+hover_path <- paste0(output_dir, "/scatterplot_hover.html")
 
 scatter_html_path <- paste0(output_dir, "/scatterplot.html")
-htmlwidgets::saveWidget(tileplot_hover, file = scatter_html_path, selfcontained = TRUE)
+htmlwidgets::saveWidget(scatter_hover, file = scatter_html_path, selfcontained = TRUE)
 
 
 }
@@ -1173,3 +1178,6 @@ for (pl in names(plot_meta)) {
 
   writeLines(append(html_content, og_tags, after = head_line), path_out)
 }
+
+look <- plot_meta[["scatterplot"]]
+look$image
