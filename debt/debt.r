@@ -137,6 +137,7 @@ munic_list <- left_join(munic_census, munic_names, by  = c("dem_code" = "demarca
 
 ####################################################################################################################################################################################
 
+if (TRUE){
 drilldown_oprev <- paste("amount_type.code", 
                         "financial_year_end.year",
                         # "function.category_label",
@@ -325,7 +326,8 @@ debt_merge <- debt %>%
         dplyr::summarise(
                         dplyr::across(c(dplyr::any_of(c("total_amount.sum", "badi_amount.sum", "bad_amount.sum", "g1_amount.sum")), dplyr::matches("^l")),
                          ~sum(.x, na.rm = TRUE))) %>%
-        dplyr::mutate(g90_amount.sum = total_amount.sum - (l30_amount.sum + l60_amount.sum + l90_amount.sum), 
+        dplyr::mutate(g90_amount.sum = total_amount.sum - g1_amount.sum - (l30_amount.sum + l60_amount.sum + l90_amount.sum),
+                        g30_amount.sum = total_amount.sum - g1_amount.sum - l30_amount.sum, 
                         l1y_amount.sum = total_amount.sum - g1_amount.sum, 
                         dplyr::across(dplyr::matches("^l|^g"), ~.x / total_amount.sum * 100, .names = "{stringr::str_remove(.col, 'amount.sum')}pct"), 
                         ) %>%
@@ -554,10 +556,10 @@ revenue_df <- dplyr::left_join(dplyr::left_join(left_join(oprev_df, munic_list %
                                         municipality.miif_category == "B3" & district.miif_category == "C2" ~ "B3/C2",
                                         municipality.miif_category == "B4" & district.miif_category == "C1" ~ "B4/C1",
                                         municipality.miif_category == "B4" & district.miif_category == "C2" ~ "B4/C2"))
-   
+}
 ####################################################################################################################################################################################
 
-                                                        ## MUNICIPAL FINANCIAL DATA ##
+                                                        ## PLOT DATA ##
 
 ####################################################################################################################################################################################
 
@@ -566,164 +568,34 @@ revenue_df <- dplyr::left_join(dplyr::left_join(left_join(oprev_df, munic_list %
 ## Debt distribution cont'd
 ####
 
-
-debt_totals <- debt %>%
-        dplyr::select(dplyr::any_of(c("customer_group.code", "financial_period.period", "item.code", "demarcation.code", "total_amount.sum", "badi_amount.sum", "bad_amount.sum", "g1_amount.sum")),
-                        dplyr::matches("^l"), amount_type.code) %>%
-        dplyr::filter(amount_type.code == "AUDA") %>%
-        dplyr::rename(period = financial_period.period) %>%
-        dplyr::group_by(demarcation.code, period) %>%
-        dplyr::summarise(
-                        dplyr::across(c(dplyr::any_of(c("total_amount.sum", "badi_amount.sum", "bad_amount.sum", "g1_amount.sum")), dplyr::matches("^l")),
-                         ~sum(.x, na.rm = TRUE))) %>%
-        dplyr::mutate(across(c("g1_amount.sum", dplyr::matches("^l")), ~.x / total_amount.sum * 100, .names = "{stringr::str_remove(.col, 'amount.sum')}pct"))
-
-debt_distribution_df_i <- debt_totals %>% 
-        dplyr::left_join(debt_totals %>%
-                        dplyr::transmute(demarcation.code, 
-                                        period = period + 1, 
-                                        prev_book = g1_amount.sum + l1_amount.sum + l30_amount.sum + l60_amount.sum +
-                                   l90_amount.sum + l120_amount.sum + l150_amount.sum + l180_amount.sum), 
-                                   by = c("demarcation.code", "period")) %>% 
-        dplyr::mutate(outst_pct = g1_amount.sum / prev_book) %>%
-        tidyr::pivot_longer(!c(period, demarcation.code),
-                names_to = "type",
-                values_to = "value") %>%
-        dplyr::mutate(type = case_when(type %in% c("l30_pct", "l60_pct", "l90_pct", "l120_pct", "l150_pct", "l180_pct") ~ "l180_pct", 
-                        TRUE ~ type)) %>%
-        dplyr::filter(type %in% c("l180_pct", "l1_pct", "g1_pct", "badi_pct", "bad_pct", "collectability_i", "collectability_a", "outst_pct")) %>%
-        dplyr::filter(period >= 2021 & type == "outst_pct" & is.finite(value)) %>%
-        dplyr::mutate(value_raw_i = value, 
-                        value = ifelse(value > 1, 1, value),
-                         decile = floor(value / 0.1), 
-                         decile = ifelse(decile == -2, -1, decile))
-
-
-
-count_df <- debt_distribution_df_i %>%
-        dplyr::group_by(period, decile) %>%
-        dplyr::summarise(n = dplyr::n()) 
-
-total_df <- count_df %>% 
-        dplyr::group_by(period) %>%
-        dplyr::summarise(n_total = sum(n, na.rm = TRUE)) 
-
-count_df <- dplyr::left_join(count_df, total_df, by = "period")  %>%
-        dplyr::mutate(n_pct = n / n_total) 
-
-aged_debt_df <- debt_distribution_df_i %>% 
-                dplyr::filter(value_raw_i < 10 & value_raw_i > 0) %>%
-                dplyr::group_by(period) %>%
-                dplyr::summarise(raw_mean = mean(value_raw_i, na.rm = TRUE),
-                                raw_median = median(value_raw_i, na.rm = TRUE)) %>%
-                dplyr::full_join(count_df, by = "period")
-
-bins <- sort(unique(aged_debt_df$decile))
-
-print(bins)
-label_map_aged_debt <- setNames(c(" ", "0% - 10%", "11% - 20%", "21% - 30%", "31% - 40%", "41% - 50%", "51% - 60%", "61% - 70%", "71% - 80%", "81% - 90%", "91% - 100%", "> 100%"), bins)
-
-names(label_map_aged_debt)
-
-aged_debt <- list()
-
-for (year in (2022:2025)){
-
-        plot_data <- aged_debt_df %>%
-                dplyr::filter(period == year) 
-
-        fyear <- paste0((year - 1), "/", stringr::str_sub(year, -2, -1))
-
-        mean_x <- round(plot_data$raw_mean[1], digits = 3) * 10
-
-        median_x <- round(plot_data$raw_median[1], digits = 3) * 10
-
-        nobs <- paste0(nrow(debt_distribution_df_i %>% dplyr::filter(period == year & !is.na(value_raw_i))), "/", 213)
-
-        debthist_temp <- ggplot(data = plot_data %>% dplyr::filter(decile >= 0), aes(x = decile, y = n_pct)) +
-                geom_col(fill = "#5C8A5A") +
-                geom_vline(xintercept  = pmin(mean_x, 10), 
-                                linetype = "solid", 
-                                linewidth = 0.75) + 
-                geom_vline(xintercept  = pmin(median_x, 10), 
-                                linetype = "dashed", 
-                                linewidth = 0.75) +
-                scale_x_continuous(breaks = 0:10,
-                                labels = function(b) ifelse((b + 1) %% 2 == 1, make_bin_labels(b), ""), 
-                                expand = c(0.01, 0.01)) +
-                scale_y_continuous(limits = c(0, 0.30), 
-                        minor_breaks = scales::breaks_pretty(n = 6),
-                        labels  = function(x) ifelse(x == 0, "", x * 100),
-                        expand = expansion(mult = c(0, 0))) +
-                labs(y = "Percentage of Municipalities",
-                        x = "Percentage of debt outstanding for over 1 year", 
-                        title = paste0(fyear, " (", nobs, ")")) +
-                coord_cartesian(xlim = c(-0.5, 10.5), ylim = c(0, max_y)) +
-                annotate("text", 
-                                x = c(ifelse(mean_x < 10,mean_x, 10), ifelse(median_x < 10, median_x, 10)), 
-                                y = 0.25, 
-                                label = c(paste0("Mean: ", ifelse(mean_x < 10, round(mean_x * 10, digits = 2), "> 100"), "%"), 
-                                        paste0("Median: ", ifelse(median_x < 10, round(median_x * 10, digits = 2), "> 100"), "%")), 
-                                vjust = c(-1, 1), 
-                                hjust = c(ifelse(mean_x < 10, -0.1, 1.1), 1.1), 
-                                size = 3) +
-                substack_theme +
-                theme( panel.grid.minor = element_blank(), 
-                        plot.title.position = "panel", 
-                        plot.title = element_text(colour = "#1F2A24", size = rel(1), hjust = 0.5, face = "plain"),
-                        panel.border = element_blank()) 
-
-        aged_debt[[as.character(year)]] <- debthist_temp
-}
-
-combined_aged_debt <- patchwork::wrap_plots(aged_debt, nrow = length(aged_debt)) +
-                patchwork::plot_layout(axis_titles = "collect", guides = "collect", axes = "collect") +
-                patchwork::plot_annotation(title = "Percentage of debt unresolved from previous\n year by Municipality, 2021/22 - 2024/25",
-                                caption = "substack.com/@onderstromings\nSource: National Treasury\nNote: Municipalities without data excluded\n          Mean values are represented by solid lines, dashed lines indicate median values.", 
-                                theme = substack_theme + theme(axis.title = element_text(face = "plain")))
-
-debt_plot <- cowplot::ggdraw(combined_aged_debt) +   
-        theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
-debt_plot
-
-debtcomp_path <- paste0(output_dir, "/debt_comp.png")
-
-png(filename = debtcomp_path,
-        width = 650,
-        height = 1100,
-        res = 130)
-
-print(debt_plot)
-
-dev.off()
-
-revenue_source_df <- tibble::tibble(code = c(as.character(seq(1200, 1600, by = 100))), 
-                                title = c("Water", "Electricity", "Property Rates", "Waste Water Management", "Waste Management"))
-
-make_bin_labels <- function(bins, width = 0.1, cap = 1) {
-  top <- floor(cap / width)          # the bin that capped values fall into (10)
-  dplyr::case_when(
-    bins < 0    ~ "< 0%",
-    bins >= top ~ paste0("\u2265 ", cap * 100, "%"),
-    TRUE        ~ paste0(bins * width * 100, "% - ", (bins + 1) * width * 100, "%")
-  )
-}
-
-make_bin_labels(-1:10)
-
 debt <- dplyr::left_join(debt, revenue_df %>% dplyr::distinct(demarcation.code, revenue_group), by = "demarcation.code" )
+
+if (TRUE){
 
 years_outst <- list()
 
+scatter_list <- list()
+
+scatter_dfs <- list()
+
+paired_cols <- list()
+
+distribution_df_list <- list()
+
+all_items <- c(as.character(seq(1200, 1700, by = 100)), "1810", "1820", "1900")
+
+aged_debt_combined <- tidyr::expand_grid(demarcation.code = unique(munic_list$demarcation.code), 
+                                        period = 2021:2025)
+
 for (i in 1:nrow(revenue_source_df)){
 
-        itemcode <- revenue_source_df$code[i]
+        itemcode <- revenue_source_df$code[[i]]
 
         title_id <- revenue_source_df$title[i]
         
         file_id <- gsub(" ", "_", tolower(title_id))
 
-        plot_title <- paste0("Percentage of ", title_id, " debt unresolved\nfrom previous year by Municipality, 2021/22 - 2024/25")
+        plot_title <- paste0("Percentage of ", title_id, " debt unresolved\nfrom previous year by Municipality, 2020/21 or 2021/22 - 2024/25")
 
         if (stringr::str_detect(file_id, "water")){
                 debt_totals <- debt %>%
@@ -751,7 +623,7 @@ for (i in 1:nrow(revenue_source_df)){
                         dplyr::select(dplyr::any_of(c("customer_group.code", "financial_period.period", "item.code", "demarcation.code", "total_amount.sum", "badi_amount.sum", "bad_amount.sum", "g1_amount.sum")),
                                         dplyr::matches("^l"), amount_type.code, revenue_group) %>%
                         dplyr::filter(amount_type.code == "AUDA" & 
-                                        item.code == itemcode &
+                                        item.code %in% itemcode &
                                         !stringr::str_detect(stringr::str_sub(demarcation.code, start = 1, end = 2), "DC")) %>%
                         dplyr::rename(period = financial_period.period) %>%
                         dplyr::group_by(demarcation.code, period) %>%
@@ -767,13 +639,14 @@ for (i in 1:nrow(revenue_source_df)){
                         nobs_raw <- nrow(revenue_df %>% dplyr::distinct(demarcation.code, revenue_group))
                 }
 
+
         debt_distribution_df <- debt_totals %>% 
                 dplyr::left_join(debt_totals %>%
                                 dplyr::transmute(demarcation.code, 
                                                 period = period + 1, 
                                                 prev_book = book), 
                                         by = c("demarcation.code", "period")) %>% 
-                dplyr::mutate(outst_pct = g1_amount.sum / prev_book) %>%
+                dplyr::mutate(outst_pct = ifelse(g1_amount.sum > 10000 & prev_book > 10000, g1_amount.sum / prev_book, NA_integer_)) %>%
                 tidyr::pivot_longer(!c(period, demarcation.code),
                         names_to = "type",
                         values_to = "value") %>%
@@ -802,16 +675,14 @@ for (i in 1:nrow(revenue_source_df)){
                         dplyr::summarise(raw_mean = mean(value_raw, na.rm = TRUE),
                                         raw_median = median(value_raw, na.rm = TRUE)) %>%
                         dplyr::full_join(count_df, by = "period")
-
-        bins <- sort(unique(aged_debt_df$decile))
         
         aged_debt <- list()
 
         max_y = max(aged_debt_df$n_pct)
 
-        years_outst[[as.character(itemcode)]] <- debt_distribution_df %>% 
+        years_outst[[as.character(file_id)]] <- debt_distribution_df %>% 
                                                 dplyr::filter(value_raw < 10 & value_raw > 0) %>%
-                                                dplyr::mutate(itemcode = itemcode)
+                                                dplyr::mutate(itemcode = file_id)
 
         for (year in (2022:2025)){
 
@@ -863,7 +734,6 @@ for (i in 1:nrow(revenue_source_df)){
                 aged_debt[[as.character(year)]] <- debthist_temp
         }
 
-        
         combined_aged_debt <- patchwork::wrap_plots(aged_debt, nrow = length(aged_debt)) +
                         patchwork::plot_layout(axis_titles = "collect", guides = "collect", axes = "collect") +
                         patchwork::plot_annotation(title = plot_title,
@@ -885,41 +755,415 @@ for (i in 1:nrow(revenue_source_df)){
 
         dev.off()
 
+        distribution_compared_init <- debt_totals %>% 
+                dplyr::left_join(debt_totals %>%
+                                dplyr::transmute(demarcation.code, 
+                                                period = period + 1, 
+                                                prev_book = g1_amount.sum + l1_amount.sum + l30_amount.sum + l60_amount.sum +
+                                        l90_amount.sum + l120_amount.sum + l150_amount.sum + l180_amount.sum), 
+                                        by = c("demarcation.code", "period")) %>% 
+                dplyr::mutate(outst_pct = g1_amount.sum / prev_book) 
+
+        distribution_compared <- distribution_compared_init %>%
+                tidyr::pivot_longer(!c(period, demarcation.code),
+                        names_to = "type",
+                        values_to = "value") %>%
+                dplyr::mutate(type = case_when(type %in% c("l30_pct", "l60_pct", "l90_pct", "l120_pct", "l150_pct", "l180_pct") ~ "l180_pct", 
+                                TRUE ~ type)) %>%
+                dplyr::filter(type %in% c("l180_pct", "l1_pct", "g1_pct", "badi_pct", "bad_pct", "collectability_i", "collectability_a", "outst_pct")) %>%
+                dplyr::filter(period %in% c(2021, 2022, 2025) & type == "outst_pct" & is.finite(value) & value < 1) %>%
+                dplyr::mutate(value_raw = value, 
+                                value = ifelse(value > 1, 1, value),
+                                decile = pmax(floor(value / 0.1), -1))
+
+        debt_totals_combine <- distribution_compared_init %>%
+                        dplyr::rename_with(~ paste0(.x, "_", file_id), -c(demarcation.code, period))
+
+        aged_debt_combined <- dplyr::left_join(aged_debt_combined, debt_totals_combine, by = c("demarcation.code", "period"))
+
+        start_df <- distribution_compared %>%
+                dplyr::filter(period %in% c(2021, 2022)) %>%
+                dplyr::group_by(demarcation.code) %>%
+                dplyr::slice_min(period, n = 1, with_ties = FALSE) %>%  
+                dplyr::ungroup() %>%
+                dplyr::mutate(start_year = period, period = "Start")
+
+        end_df <- distribution_compared %>%
+                dplyr::filter(period == 2025) %>%
+                dplyr::mutate(start_year = NA_real_, period = "2024/25")
+
+        distribution_compared <- dplyr::bind_rows(start_df, end_df) %>%
+                dplyr::mutate(period = factor(period, levels = c("Start", "2024/25")))
+
+        distribution_df_list[[file_id]] <- distribution_compared
+
+        count_df <- distribution_compared %>%
+                dplyr::group_by(period, decile) %>%
+                dplyr::summarise(n = dplyr::n()) 
+
+        total_df <- count_df %>% 
+                dplyr::group_by(period) %>%
+                dplyr::summarise(n_total = sum(n, na.rm = TRUE)) 
+
+        count_df <- dplyr::left_join(count_df, total_df, by = "period")  %>%
+                dplyr::mutate(n_pct = n / n_total) 
+
+        cols_df <- distribution_compared %>% 
+                        dplyr::filter(value_raw < 10 & value_raw > 0) %>%
+                        dplyr::group_by(period) %>%
+                        dplyr::summarise(raw_mean = mean(value_raw, na.rm = TRUE),
+                                        raw_median = median(value_raw, na.rm = TRUE)) %>%
+                        dplyr::full_join(count_df, by = "period")
+
+        bins <- -1:9
+        label_map_aged_debt <- setNames(c(" ", paste0(seq(0, 90, 10), "%")), bins)
+
+        plot_cols <- cols_df %>%
+                dplyr::filter(decile >= 0) %>%
+                dplyr::mutate(period = factor(period)) %>%
+                tidyr::complete(period, decile = 0:9, fill = list(n_pct = 0))
+
+        stats_df <- aged_debt_df %>% 
+                dplyr::ungroup() %>%
+                dplyr::group_by(period) %>% 
+                dplyr::select(period, raw_mean, raw_median) %>%
+                dplyr::mutate(nobs = dplyr::n(), .groups = "drop") %>%
+                dplyr::mutate(period = factor(period, levels = levels(distribution_compared$period)))
+
+        period_colour_map <- setNames(c("#C9A66B", "#5C8A5A"), levels(distribution_compared$period))
+
+        max_y <- max(plot_cols$n_pct)
+
+        legend_labs <- plot_cols %>%
+                        dplyr::distinct(period, n_total) %>%
+                        dplyr::mutate(lab = paste0(period, " (", n_total, ")")) %>%
+                        dplyr::pull(lab, name = period)
+
+        paired_cols_temp <- ggplot(data = plot_cols %>% dplyr::filter(decile >= 0), aes(x = decile, y = n_pct, fill = period, colour = period)) +
+                geom_col(position = position_dodge(width = 0.8), width = 0.8) +
+                geom_vline(data = ~ dplyr::distinct(.x, period, raw_mean, raw_median), aes(colour = period, xintercept  = pmin(raw_mean * 10, 10)), 
+                                linetype = "solid", 
+                                linewidth = 0.75) + 
+                geom_vline(data = ~ dplyr::distinct(.x, period, raw_mean, raw_median), aes(colour = period, xintercept  = pmin(raw_median *10, 10)), 
+                                linetype = "dashed", 
+                                linewidth = 0.75) +
+                geom_text(data = ~ dplyr::distinct(.x, period, raw_mean, raw_median) %>% dplyr::filter(!is.na(raw_mean)),
+                        aes(x = pmin(raw_mean * 10, 10), y = 0.275, colour = period,
+                        hjust = 1.1,
+                        vjust = ifelse(period == levels(period)[1], 0, 2.5),
+                        label = paste0("mean: ",
+                                ifelse(raw_mean < 1, round(raw_mean * 100, 1), "> 100"), "%")),
+                        size = 3, inherit.aes = FALSE, show.legend = FALSE) +
+                geom_text(data = ~ dplyr::distinct(.x, period, raw_mean, raw_median) %>% dplyr::filter(!is.na(raw_median)),
+                        aes(x = pmin(raw_median * 10, 10), y = 0.225, colour = period,
+                        hjust = 1.1,
+                        vjust = ifelse(period == levels(period)[1], 0, 2.5),
+                        label = paste0("median: ",
+                                ifelse(raw_median < 1, round(raw_median * 100, 1), "> 100"), "%")),
+                        size = 3, inherit.aes = FALSE, show.legend = FALSE) +
+                scale_x_continuous(breaks = 0:9,
+                                labels = function(b) ifelse((b + 1) %% 2 == 1, make_bin_labels(b), ""), 
+                                expand = c(0.01, 0.01)) +
+                scale_y_continuous(limits = c(0, 0.3), 
+                        minor_breaks = scales::breaks_pretty(n = 6),
+                        labels  = function(x) ifelse(x == 0, "", x * 100),
+                        expand = expansion(mult = c(0, 0))) +
+                scale_fill_manual(values = period_colour_map, name = NULL) +
+                scale_colour_manual(values = period_colour_map, name = NULL) +
+                labs(y = "Percentage of Municipalities",
+                        x = "Percentage of debt outstanding for over 1 year", 
+                        title = title_id) +
+                coord_cartesian(xlim = c(-0.5, 9.5)) +
+                substack_theme +
+                theme( panel.grid.minor = element_blank(), 
+                        plot.title.position = "panel", 
+                        plot.title = element_text(colour = "#1F2A24", size = rel(1), hjust = 0.5, face = "plain"),
+                        panel.border = element_blank()) 
+
+
+        paired_cols[[file_id]] <- paired_cols_temp
+
+        scatterplot_df <- debt_distribution_df %>% 
+                        dplyr::left_join(munic_list %>% dplyr::select(demarcation.code, demarcation.label, municipality.province_code), by = "demarcation.code") %>%
+                        dplyr::filter(value_raw < 10 &
+                                        value_raw > 0 & 
+                                        !stringr::str_detect(stringr::str_sub(demarcation.code, 1, 2), "DC") &
+                                        period %in% c(2021, 2022, 2025)) %>%
+                        dplyr::ungroup() %>% 
+                        tidyr::pivot_wider(id_cols = c(demarcation.code, demarcation.label, municipality.province_code), 
+                                        names_from = period, 
+                                        values_from = c("value", "value_raw")) %>%
+                        dplyr::group_by(demarcation.code) %>%
+                        dplyr::mutate(xval = coalesce(value_raw_2021, 
+                                                value_raw_2022),
+                                        yval = value_raw_2025, 
+                                        direction = factor(ifelse(xval > yval, "Improvement", "Deterioration"), 
+                                                        levels = c("Improvement", "Deterioration"))) %>%
+                        dplyr::ungroup() %>%
+                        dplyr::select(demarcation.code, xval, yval, direction, demarcation.label, municipality.province_code) %>%
+                        dplyr::filter(!is.na(xval) & !is.na(yval) & xval < 1 & yval < 1) %>%
+                        dplyr::mutate(change = yval - xval, 
+                                        label = ifelse(dplyr::min_rank(dplyr::desc(change)) <= 5 |
+                                                dplyr::min_rank(change) <= 5, 
+                                                paste0(demarcation.label, " (", municipality.province_code, ")"), NA_character_))
+
+        scatter_dfs[[file_id]] <- scatterplot_df
+
+        temp_scatter <- ggplot(data = scatterplot_df, aes(x = xval, y = yval, colour = direction, label = label)) + 
+                            geom_abline(slope = 1, intercept = 0, linewidth = 1, linetype = "dashed", colour = "#2E4B3C") +
+                            geom_point(size = 3) + 
+                            ggrepel::geom_text_repel(
+                                        aes(label = label),
+                                        na.rm = TRUE,
+                                        size = 2.6,
+                                        colour = "#1F2A24",
+                                        box.padding = 0.4,
+                                        min.segment.length = 0,
+                                        segment.colour = "grey60",
+                                        segment.size = 0.3,
+                                        max.overlaps = Inf,
+                                        seed = 42
+                                        ) + 
+                            scale_x_continuous(name = "2020/21 or 2021/22 ",
+                                        limits = c(0, 1), 
+                                        labels  = function(x) ifelse(x == 0, "", scales::label_percent(accuracy = 1)(x)),
+                                        expand = expansion(mult = c(0, 0.05))) +
+                            scale_y_continuous(name = "2024/25",
+                                        limits = c(0, 1), 
+                                        labels  = function(x) ifelse(x == 0, "", scales::label_percent(accuracy = 1)(x)),
+                                        expand = expansion(mult = c(0, 0.05))) +
+                            scale_colour_manual(values = c("Improvement" = "#5C8A5A",  "Deterioration" = "#8C5E58"),
+                                                drop = FALSE,  
+                                                guide = guide_legend(title = NULL, nrow = 1, ncol = 2, order = 1)) +
+                            labs(title = title_id, 
+                                    # caption = "substack.com/@onderstromings\n \nSource: National Treasury"
+                                    ) +
+                            substack_theme +
+                            theme(panel.grid.major = element_blank(), 
+                                    legend.position = "none")
+
+    scatter_list[[file_id]] <- temp_scatter
+
+
 }
 
-k <- years_outst[["1200"]]
+pairedcols_df <- paired_cols[["total"]]
+
+combined_scatter <- patchwork::wrap_plots(scatter_list[1:6], nrow = 2) +
+                        patchwork::plot_layout(axis_titles = "collect", guides = "collect", axes = "collect") +
+                        patchwork::plot_annotation(title = "Debt Outstanding after 1 year",
+                                        caption = "substack.com/@onderstromings\nSource: National Treasury\nNote: Values represent share of previous year's closing balance still outstanding at current year end.", 
+                                        theme = substack_theme + theme(axis.title = element_text(face = "plain")))
+
+scatter_combined <- cowplot::ggdraw(combined_scatter) +   
+                theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+scatter_combined_path <- paste0(output_dir, "/scatter_combined.png")
+
+png(filename = scatter_combined_path,
+                width = 1300,
+                height = 850,
+                res = 90)
+
+print(scatter_combined)
+
+dev.off()
+
+
+paired_cols_combined <- patchwork::wrap_plots(paired_cols[1:6], nrow = 2) +
+                patchwork::plot_layout(axis_titles = "collect", guides = "collect", axes = "collect") +
+                patchwork::plot_annotation(title = "Percentage of debt unresolved from previous\n year by Municipality, 2020/21 or 2021/22 - 2024/25",
+                                caption = "substack.com/@onderstromings\nSource: National Treasury\nNote: Municipalities without data excluded\n          Mean values are represented by solid lines, dashed lines indicate median values.\n          Start values are the earliest availabel data of 2020/21 and 2021/22", 
+                                theme = substack_theme + theme(axis.title = element_text(face = "plain")))
+
+paired_cols_plot <- cowplot::ggdraw(paired_cols_combined) +   
+        theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+paired_cols_path <- paste0(output_dir, "/paired_cols.png")
+
+png(filename = paired_cols_path,
+        width = 1100,
+        height = 900,
+        res = 130)
+
+print(paired_cols_plot)
+
+dev.off()
+
+
+aged_debt_csv <- aged_debt_combined %>%
+                dplyr::left_join(munic_list %>% dplyr::select(demarcation.code, demarcation.label, municipality.province_code,), by = "demarcation.code") %>%
+                dplyr::filter(period == 2025) %>%
+                dplyr::select(demarcation.label, municipality.province_code, dplyr::matches("^outst_pct")) %>%
+                dplyr::mutate(`Municipality` = `demarcation.label`,
+                                `Province` = municipality.province_code,
+                                `Total` = `outst_pct_total` * 100, 
+                                `Water` = `outst_pct_water` * 100, 
+                                `Electricity` = `outst_pct_electricity` * 100, 
+                                `Property Rates` = `outst_pct_property_rates` * 100, 
+                                `Waste` = `outst_pct_waste_management` * 100, 
+                                `Waste Water` = `outst_pct_waste_water_management` * 100) %>%
+                dplyr::select(!c(demarcation.label, municipality.province_code, dplyr::matches("^outst_pct")))
+                
+write.csv(aged_debt_csv, file = paste0(output_dir, "/aged_debt.csv"))
+
+}
+
+paired_check <- distribution_df_list[["total"]]
+
+head(paired_check)
+
+paired_check <- paired_check %>%
+        dplyr::group_by(demarcation.code) %>%
+        dplyr::filter(any(period %in% c(2021, 2022)) & any(period ==2025)) %>%
+        dplyr::mutate(nobs = n()) %>%
+        dplyr::ungroup()
+
+paired <- paired_check %>%
+  dplyr::group_by(demarcation.code) %>%
+  dplyr::filter(any(period == "2024/25")) %>%
+  dplyr::ungroup()
+
+print(n_distinct(paired$demarcation.code))
+
+comparison <- paired_check %>%
+  dplyr::select(demarcation.code, type, period, value) %>%
+  tidyr::pivot_wider(names_from = period, values_from = value) %>%
+  dplyr::filter(!is.na(Start) & !is.na("2024/25")) %>%   # keep only paired codes
+  dplyr::mutate(start_greater = Start > `2024/25`) %>%
+  dplyr::count(start_greater)
+
+# How many have Start > End
+sum(comparison$start_greater)
+
+dplyr::n_distinct(paired$demarcation.code)
+
+look <- scatter_dfs[["water"]]
+
+nrow(look[look$change < 0, ] )
+
+
+
 ####
 ## G90 debt over revenue - total, 
 ####
 
-
+if (TRUE){
 cols <- colnames(revenue_df)
-opdebt_cols <- stringr::str_detect(cols, "^g90_amount") & !stringr::str_detect(cols, "_1900$")
+opdebt_cols <- stringr::str_detect(cols, "^g30_amount") & !stringr::str_detect(cols, "_1900$")
 
 lineplot_init_df <- revenue_df %>%
-                dplyr::mutate(oprev = rowSums(revenue_df[,  4:28], na.rm = TRUE), 
+                dplyr::mutate(oprev = rowSums(revenue_df[,  c(4:21, 23:28)], na.rm = TRUE), 
                                 opdebt = rowSums(revenue_df[, opdebt_cols], na.rm = TRUE), 
-                                total_ratio = opdebt / oprev, 
-                                total_ratio = ifelse(total_ratio < 10, total_ratio, NA_integer_),
-                                electricity_ratio = ifelse(service_charges_electricity >= 10000, g90_amount.sum_1300 / service_charges_electricity, NA_integer_ ), 
-                                water_ratio = ifelse(service_charges_water >= 10000, g90_amount.sum_1200 / service_charges_water, NA_integer_ ), 
-                                waterwaste_ratio = ifelse(service_charges_waste_water_management >= 10000,g90_amount.sum_1500 / service_charges_waste_water_management, NA_integer_ ),
-                                waste_ratio = ifelse(service_charges_waste_management >= 10000, g90_amount.sum_1600 / service_charges_waste_management, NA_integer_ )) %>%
-                dplyr::filter(amount_type.code == "AUDA") %>%
-                dplyr::select(demarcation.code, period, dplyr::matches("|service_charges_|_ratio|1200|1300|1500|1600|oprev|opdebt"), revenue_group) 
+                                total_ratio = ifelse(oprev >= 10000 & opdebt >= 10000,opdebt / oprev, NA_integer_), 
+                                total_ratio = ifelse(total_ratio < 1, total_ratio, NA_integer_),
+                                electricity_ratio = ifelse(service_charges_electricity >= 10000 & g30_amount.sum_1300 >= 10000 & service_charges_electricity > g30_amount.sum_1300, g30_amount.sum_1300 / service_charges_electricity, NA_integer_ ), 
+                                water_ratio = ifelse(service_charges_water >= 10000 & g30_amount.sum_1200 >= 10000 & service_charges_water > g30_amount.sum_1200, g30_amount.sum_1200 / service_charges_water, NA_integer_ ), 
+                                waterwaste_ratio = ifelse(service_charges_waste_water_management >= 10000 & g30_amount.sum_1500 >= 10000 & service_charges_waste_water_management > g30_amount.sum_1500, g30_amount.sum_1500 / service_charges_waste_water_management, NA_integer_ ),
+                                waste_ratio = ifelse(service_charges_waste_management >= 10000 & g30_amount.sum_1600 >= 10000 & service_charges_waste_management > g30_amount.sum_1600, g30_amount.sum_1600 / service_charges_waste_management, NA_integer_ ), 
+                                property_ratio = ifelse(property_rates >= 10000 & g30_amount.sum_1400 >= 10000 & property_rates > g30_amount.sum_1400, g30_amount.sum_1400 / property_rates, NA_integer_ )) %>%
+                dplyr::filter(amount_type.code == "AUDA" & period > 2020) %>%
+                dplyr::select(demarcation.code, period, dplyr::matches("service_charges_|_ratio|1200|1300|1500|1600|oprev|opdebt"), revenue_group) %>%
+                dplyr::filter(period == 2025)  %>%
+                dplyr::mutate(inrange_total = ifelse(total_ratio < 1 & !is.na(total_ratio), 1, 0), 
+                                inrange_electricity = ifelse(electricity_ratio < 1 & !is.na(electricity_ratio), 1, 0), 
+                                inrange_water = ifelse(water_ratio < 1 & !is.na(water_ratio), 1, 0), 
+                                inrange_waste = ifelse(waste_ratio < 1 & !is.na(waste_ratio), 1, 0), 
+                                inrange_waterwaste = ifelse(waterwaste_ratio < 1 & !is.na(waterwaste_ratio), 1, 0), 
+                                inrange_property = ifelse(property_ratio < 1 & !is.na(property_ratio), 1, 0)) %>%
+                dplyr::summarise(dplyr::across(dplyr::matches("^inrange"), ~ sum(.x, na.rm = TRUE)))
+
 
 electricity_waste <- lineplot_init_df %>%
-                dplyr::group_by(period) %>%
-                dplyr::summarise(across(dplyr::matches("ratio"), ~ mean(.x, na.rm = TRUE))) %>%
-                dplyr::mutate(dplyr::across(dplyr::matches("ratio"), ~ (.x / .x[period == 2021]) * 100, .names = "{sub('_ratio$','_index', .col)}")) %>%
-                dplyr::select(period, total_index, electricity_index, waste_index)
+                dplyr::select(period, demarcation.code, total_ratio, electricity_ratio, waste_ratio, property_ratio) %>%
+                tidyr::pivot_longer(dplyr::matches("ratio$"),
+                            names_to = "type", values_to = "ratio") %>%
+                dplyr::group_by(type, period) %>%
+                dplyr::summarise(mean_ratio = mean(ratio, na.rm = TRUE),
+                                median_ratio = median(ratio, , na.rm = TRUE),
+                                n = dplyr::n(),
+                                .groups = "drop") %>%
+                dplyr::group_by(type) %>%
+                dplyr::mutate(mean_index = mean_ratio / mean_ratio[period == 2021] * 100,
+                        median_index = median_ratio / median_ratio[period == 2021] * 100,
+                        type = sub("_ratio$", "_index", type)) %>%
+                dplyr::ungroup() %>%
+                tidyr::pivot_wider(id_cols = period, 
+                                names_from = type, 
+                                values_from = mean_index)
+
+ew_balanced <- lineplot_init_df %>%
+                dplyr::select(period, , demarcation.code, total_ratio, electricity_ratio, waste_ratio, property_ratio) %>%
+                tidyr::pivot_longer(dplyr::matches("ratio$"), 
+                                        names_to = "type", 
+                                        values_to = "ratio") %>%
+                dplyr::filter(!is.na(ratio)) %>%
+                dplyr::group_by(demarcation.code, type) %>%
+                dplyr::mutate(n_periods = dplyr::n_distinct(period)) %>%
+                dplyr::ungroup() %>%
+                dplyr::filter(n_periods == 5) %>%
+                dplyr::group_by(type, period) %>%
+                dplyr::summarise(mean_ratio = mean(ratio),
+                                median_ratio = median(ratio),
+                                n = dplyr::n(),
+                                .groups = "drop") %>%
+                dplyr::group_by(type) %>%
+                dplyr::mutate(mean_index = mean_ratio / mean_ratio[period == 2021] * 100,
+                        median_index = median_ratio / median_ratio[period == 2021] * 100,
+                        type = sub("_ratio$", "_index", type)) %>%
+                dplyr::ungroup() %>%
+                tidyr::pivot_wider(id_cols = period, 
+                                names_from = type, 
+                                values_from = mean_index)
+
+#electricity & total was 80, waste was 41 and property is 72
+
 
 water_df <- lineplot_init_df %>%
                 dplyr::filter(!stringr::str_detect(revenue_group, "C2")) %>%
-                dplyr::group_by(period) %>%
-                dplyr::summarise(across(dplyr::matches("ratio"), ~ mean(.x, na.rm = TRUE))) %>%
-                dplyr::mutate(dplyr::across(dplyr::matches("ratio"), ~ (.x / .x[period == 2021]) * 100, .names = "{sub('_ratio$','_index', .col)}")) %>%
-                dplyr::select(period, water_index, waterwaste_index)
+                dplyr::select(period, demarcation.code, water_ratio, waterwaste_ratio) %>%
+                tidyr::pivot_longer(dplyr::matches("ratio$"),
+                            names_to = "type", values_to = "ratio") %>%
+                dplyr::group_by(type, period) %>%
+                dplyr::summarise(mean_ratio = mean(ratio, na.rm = TRUE),
+                                median_ratio = median(ratio, , na.rm = TRUE),
+                                n = dplyr::n(),
+                                .groups = "drop") %>%
+                dplyr::group_by(type) %>%
+                dplyr::mutate(mean_index = mean_ratio / mean_ratio[period == 2021] * 100,
+                        median_index = median_ratio / median_ratio[period == 2021] * 100,
+                        type = sub("_ratio$", "_index", type)) %>%
+                dplyr::ungroup() %>%
+                tidyr::pivot_wider(id_cols = period, 
+                                names_from = type, 
+                                values_from = mean_index)
+                
+water_balanced <- lineplot_init_df %>%
+                dplyr::filter(!stringr::str_detect(revenue_group, "C2")) %>%
+                dplyr::select(period, demarcation.code, water_ratio, waterwaste_ratio) %>%
+                tidyr::pivot_longer(dplyr::matches("ratio$"), 
+                                        names_to = "type", 
+                                        values_to = "ratio") %>%
+                dplyr::filter(!is.na(ratio)) %>%
+                dplyr::group_by(demarcation.code, type) %>%
+                dplyr::mutate(n_periods = dplyr::n_distinct(period)) %>%
+                dplyr::ungroup() %>%
+                dplyr::filter(n_periods == 5) %>%
+                dplyr::group_by(type, period) %>%
+                dplyr::summarise(mean_ratio = mean(ratio),
+                                median_ratio = median(ratio),
+                                n = dplyr::n(),
+                                .groups = "drop") %>%
+                dplyr::group_by(type) %>%
+                dplyr::mutate(mean_index = mean_ratio / mean_ratio[period == 2021] * 100,
+                        median_index = median_ratio / median_ratio[period == 2021] * 100,
+                        type = sub("_ratio$", "_index", type)) %>%
+                dplyr::ungroup() %>%
+                tidyr::pivot_wider(id_cols = period, 
+                                names_from = type, 
+                                values_from = mean_index)
+
+##for water, only 21 municipalities had complete observations, while for water waaste it was 27. 
 
 lineplot_df <- left_join(electricity_waste, water_df, by = "period") %>%
                 tidyr::pivot_longer(-period, 
@@ -927,54 +1171,210 @@ lineplot_df <- left_join(electricity_waste, water_df, by = "period") %>%
                                         values_to = "value") %>%
                 dplyr::filter(period >= 2021) %>%
                 dplyr::mutate(type = forcats::fct_reorder2(type, period, value))
+
+lineplot_df_balanced <- left_join(ew_balanced, water_balanced, by = "period") %>%
+                        tidyr::pivot_longer(-period, 
+                                        names_to = "type", 
+                                        values_to = "value") %>%
+                dplyr::filter(period >= 2021) %>%
+                dplyr::mutate(type = forcats::fct_reorder2(type, period, value))
+
                 
 colour_map_services <- c(
   total_index       = "#2E4B3C",
   electricity_index = "#A3B86C",
   waste_index       = "#5C8A5A",
   water_index       = "#C9A66B",
-  waterwaste_index  = "#7A6B4F"
+  waterwaste_index  = "#7A6B4F",
+  property_index = "#809360"
 )
 
-label_map_services <- c(
-  total_index       = "Overall",
-  electricity_index = "Electricity",
-  waste_index     = "Waste",
-  water_index       = "Water",
-  waterwaste_index  = "Water Waste"
-)
+arrears_df <- tibble::tibble(df = list(lineplot_df, lineplot_df_balanced), 
+                                title = c("Arrears to Revenue Index,  2020/21 - 2024/25", "Arrears to Revenue Index (Balanced),  2020/21 - 2024/25"), 
+                                file = c("/service_lines.png", "/service_lines_balanced.png"))
 
-lineplot <- ggplot(data = lineplot_df, mapping = aes(x = period, y = value, colour = type)) +
-        geom_line(data = lineplot_df %>% dplyr::filter(type == "total_ratio"),
-                 linewidth = 2.25) +
-        geom_line(data = lineplot_df %>% dplyr::filter(type != "total_ratio"),
-                 linewidth = 1.5) + 
-        scale_colour_manual(values = colour_map_services, labels = label_map_services) +
-        scale_y_continuous(breaks = scales::breaks_pretty(n = 6),
-                expand = expansion(mult = c(0.001, 0.05))) +
-        scale_x_continuous(labels = function(x) paste0(x-1, "/", stringr::str_sub(x, start = 3, end = 4))) +
-        labs(title    = "Aged Debt to Revenue Index,  2020/21 - 2024/25",
-        x        = "Financial Year",
-        y = "Aged Debt / Revenue Index (2020/21 = 100)",
-        caption = "substack.com/@onderstromings\n \nSource: National Treasury\nNote: Aged debt equals the value of receivables outstanding for over 90 days. ") +
-        guides(colour = guide_legend(title = NULL, order = 1)) +
-        substack_theme + 
-        theme(panel.grid.minor = element_blank(), 
-        panel.border = element_blank(), 
-        legend.position = "right", 
-        legend.direction = "vertical")
+for (i in 1:nrow(arrears_df)){
 
-lineplot
+        title <- arrears_df$title[i]
+        file <- arrears_df$file[i]
 
-line_path <- paste0(output_dir, "/service_lines.png")
+        df <- arrears_df$df[[i]]
 
-png(filename = line_path,
+        if (i == 1) {
+        label_map_services <- c(
+        total_index       = "Overall",
+        electricity_index = "Electricity",
+        waste_index     = "Waste",
+        water_index       = "Water",
+        waterwaste_index  = "Water Waste",
+        property_index = "Property Rates"
+        )
+        } else{
+               label_map_services <- c(
+        total_index       = "Overall (80)",
+        electricity_index = "Electricity (80)",
+        property_index = "Property Rates (72)",
+        waste_index     = "Waste (41)",
+        water_index       = "Water (21)",
+        waterwaste_index  = "Water Waste (27)"
+        ) 
+        }
+                
+        lineplot <- ggplot(data = df, mapping = aes(x = period, y = value, colour = type)) +
+                geom_line(data = df %>% dplyr::filter(type == "total_index"),
+                        linewidth = 2.25) +
+                geom_line(data = df %>% dplyr::filter(type != "total_index"),
+                        linewidth = 1.5) + 
+                scale_colour_manual(values = colour_map_services, labels = label_map_services) +
+                scale_y_continuous(breaks = scales::breaks_pretty(n = 6),
+                        expand = expansion(mult = c(0.001, 0.05))) +
+                scale_x_continuous(labels = function(x) paste0(x-1, "/", stringr::str_sub(x, start = 3, end = 4))) +
+                labs(title    = title,
+                x        = "Financial Year",
+                y = "Arrears / Revenue Index (2020/21 = 100)",
+                caption = "substack.com/@onderstromings\n \nSource: National Treasury\nNote: Arrears equals the value of receivables outstanding for over 30 days. ") +
+                guides(colour = guide_legend(title = NULL, order = 1)) +
+                substack_theme + 
+                theme(panel.grid.minor = element_blank(), 
+                panel.border = element_blank(), 
+                legend.position = "right", 
+                legend.direction = "vertical")
+
+        lineplot
+
+        line_path <- paste0(output_dir, file)
+
+        png(filename = line_path,
+                width = 1050,
+                height = 700,
+                res = 130)
+        print(lineplot)
+        dev.off()
+
+}
+
+ratio_col <- revenue_source_df$ratios[3]
+
+print(ratio_col)
+
+outst_scatter_list <- list()
+
+for (i in (1:nrow(revenue_source_df))){
+
+        ratio_col <- revenue_source_df$ratios[i]
+
+        title_id <- revenue_source_df$title[i]
+        
+        file_id <- gsub(" ", "_", tolower(title_id))
+
+
+        scatterplot_df <- lineplot_init_df %>% 
+                        dplyr::left_join(munic_list %>% dplyr::select(demarcation.code, municipality.province_code), by = "demarcation.code") %>%
+                        dplyr::select(period, demarcation.code, demarcation.label,  municipality.province_code, dplyr::all_of(ratio_col)) %>%
+                        dplyr::filter(!stringr::str_detect(stringr::str_sub(demarcation.code, 1, 2), "DC") &
+                                        period %in% c(2021, 2022, 2025)) %>%
+                        dplyr::ungroup() %>% 
+                        tidyr::pivot_wider(id_cols = c(demarcation.code, demarcation.label, municipality.province_code), 
+                                        names_from = period, 
+                                        values_from = dplyr::all_of(ratio_col), 
+                                        names_prefix = paste0(ratio_col, "_")) %>%
+                        dplyr::group_by(demarcation.code, demarcation.label) %>%
+                        dplyr::mutate(xval = .data[[paste0(ratio_col, "_2021")]],
+                                        yval = .data[[paste0(ratio_col, "_2025")]], 
+                                        direction = factor(ifelse(xval > yval, "Improvement", "Deterioration"), 
+                                                        levels = c("Improvement", "Deterioration"))) %>%
+                        dplyr::ungroup() %>%
+                        dplyr::select(demarcation.code, xval, yval, direction, demarcation.label, municipality.province_code) %>%
+                        dplyr::filter(!is.na(xval) & !is.na(yval) & xval < 1 & yval < 1 & xval > 0 & yval > 0) %>%
+                        dplyr::mutate(change = yval - xval, 
+                                        label = ifelse(dplyr::min_rank(dplyr::desc(change)) <= 3 |
+                                                dplyr::min_rank(change) <= 3, 
+                                                paste0(demarcation.label, " (", municipality.province_code, ")"), NA_character_))
+
+
+        temp_scatter <- ggplot(data = scatterplot_df, aes(x = xval, y = yval, colour = direction, label = label)) + 
+                            geom_abline(slope = 1, intercept = 0, linewidth = 1, linetype = "dashed", colour = "#2E4B3C") +
+                            geom_point(size = 3) + 
+                            ggrepel::geom_text_repel(
+                                        aes(label = label),
+                                        na.rm = TRUE,
+                                        size = 2.6,
+                                        colour = "#1F2A24",
+                                        box.padding = 0.4,
+                                        min.segment.length = 0,
+                                        segment.colour = "grey60",
+                                        segment.size = 0.3,
+                                        max.overlaps = Inf,
+                                        seed = 42
+                                        ) + 
+                            scale_x_continuous(name = "2020/21 or 2021/22",
+                                        limits = c(0, NA),
+                                        labels  = function(x) ifelse(x == 0, "", scales::label_percent(accuracy = 1)(x)),
+                                        expand = expansion(mult = c(0, 0.05))) +
+                            scale_y_continuous(name = "2024/25",
+                                        limits = c(0, NA),
+                                        labels  = function(x) ifelse(x == 0, "", scales::label_percent(accuracy = 1)(x)),
+                                        expand = expansion(mult = c(0, 0.05))) +
+                            scale_colour_manual(values = c("Improvement" = "#5C8A5A",  "Deterioration" = "#8C5E58"),
+                                                drop = FALSE,  
+                                                guide = guide_legend(title = NULL, nrow = 1, ncol = 2, order = 1)) +
+                            labs(title = title_id, 
+                                    # caption = "substack.com/@onderstromings\n \nSource: National Treasury"
+                                    ) +
+                            substack_theme +
+                            theme(panel.grid.major = element_blank(), 
+                                    legend.position = "none")
+
+    outst_scatter_list[[file_id]] <- temp_scatter
+
+}
+
+outstanding_revenue <- patchwork::wrap_plots(outst_scatter_list, nrow = 2) +
+                patchwork::plot_layout(axis_titles = "collect", guides = "collect") +
+                patchwork::plot_annotation(title = "Arrears as a Percentage of Revenue at Closing, 2020/21 vs 2024/25", 
+                                        caption = "Source: National Treasury \nNote: Arrears equal debt between 1 months and 1 year old.", 
+                                        theme =substack_theme)
+
+
+outstanding_revenue_path <- paste0(output_dir, "/outstanding_revenue.png")
+
+png(filename =  outstanding_revenue_path,
         width = 1050,
         height = 700,
         res = 130)
-print(lineplot)
+        
+print(outstanding_revenue)
 dev.off()
 
+
+arrears_csv <- revenue_df %>%
+                dplyr::mutate(oprev = rowSums(revenue_df[,  c(4:21, 23:28)], na.rm = TRUE), 
+                                opdebt = rowSums(revenue_df[, opdebt_cols], na.rm = TRUE), 
+                                total_ratio = opdebt / oprev, 
+                                electricity_ratio = g30_amount.sum_1300 / service_charges_electricity, 
+                                water_ratio = g30_amount.sum_1200 / service_charges_water, 
+                                waterwaste_ratio = g30_amount.sum_1500 / service_charges_waste_water_management,
+                                waste_ratio = g30_amount.sum_1600 / service_charges_waste_management, 
+                                property_ratio = g30_amount.sum_1400 / property_rates) %>%
+                dplyr::filter(amount_type.code == "AUDA" & period > 2020) %>%
+                dplyr::select(demarcation.code, , demarcation.label, period, dplyr::matches("|service_charges_|_ratio|1200|1300|1500|1600|oprev|opdebt"), revenue_group) %>%
+                dplyr::filter(period == 2025) %>%
+                dplyr::full_join(munic_list %>% dplyr::select(demarcation.code, municipality.province_code), by = "demarcation.code") %>%
+                dplyr::select(demarcation.label, municipality.province_code, total_ratio, electricity_ratio, waste_ratio, waterwaste_ratio, water_ratio, property_ratio) %>%
+                dplyr::mutate(`Municipality` = `demarcation.label`,
+                        `Province` = municipality.province_code,
+                        `Total` = `total_ratio` * 100, 
+                        `Water` = `water_ratio` * 100, 
+                        `Electricity` = `electricity_ratio` * 100, 
+                        `Property Rates` = `property_ratio` * 100, 
+                        `Waste` = `waste_ratio` * 100, 
+                        `Waste Water` = `waterwaste_ratio` * 100) %>%
+                dplyr::select(!c(demarcation.label, municipality.province_code, total_ratio, electricity_ratio, waste_ratio, waterwaste_ratio, water_ratio, property_ratio))
+
+
+write.csv(arrears_csv, file = paste0(output_dir, "/arrears_ratio.csv"))
+
+}
 
 electricity_waste_med <- lineplot_init_df %>%
                 dplyr::group_by(period) %>%
@@ -996,11 +1396,10 @@ lineplot_df_med <- left_join(electricity_waste_med, water_df_med, by = "period")
                 dplyr::filter(period >= 2021) %>%
                 dplyr::mutate(type = forcats::fct_reorder2(type, period, value))
 
-
 lineplot_med <- ggplot(data = lineplot_df_med, mapping = aes(x = period, y = value, colour = type)) +
-        geom_line(data = lineplot_df %>% dplyr::filter(type == "total_ratio"),
+        geom_line(data = lineplot_df_med %>% dplyr::filter(type == "total_index"),
                  linewidth = 2.25) +
-        geom_line(data = lineplot_df %>% dplyr::filter(type != "total_ratio"),
+        geom_line(data = lineplot_df_med %>% dplyr::filter(type != "total_index"),
                  linewidth = 1.5) + 
         scale_colour_manual(values = colour_map_services, labels = label_map_services) +
         scale_y_continuous(breaks = scales::breaks_pretty(n = 6),
@@ -1009,7 +1408,7 @@ lineplot_med <- ggplot(data = lineplot_df_med, mapping = aes(x = period, y = val
         labs(title    = "Aged Debt to Revenue Index (Medians),  2020/21 - 2024/25",
         x        = "Financial Year",
         y = "Aged Debt / Revenue Index (2020/21 = 100)",
-        caption = "substack.com/@onderstromings\n \nSource: National Treasury\nNote: Aged debt equals the value of receivables outstanding for over 90 days.") +
+        caption = "substack.com/@onderstromings\n \nSource: National Treasury\nNote: Aged debt equals the value of receivables outstanding for over 30 days.") +
         guides(colour = guide_legend(title = NULL, order = 1)) +
         substack_theme + 
         theme(panel.grid.minor = element_blank(), 
@@ -1027,6 +1426,7 @@ png(filename = line_med_path,
         width = 1050,
         height = 700,
         res = 130)
+
 print(lineplot_med)
 dev.off()
 
@@ -1039,12 +1439,12 @@ scatter_init <- revenue_df %>%
         dplyr::mutate(
                 bad_amount.sum_total = rowSums(revenue_df[, stringr::str_detect(colnames(revenue_df), "^bad_amount")], na.rm = TRUE),
                 outstanding_total = rowSums(revenue_df[, stringr::str_detect(colnames(revenue_df), "^total_amount")], na.rm = TRUE), 
-                g90_amount.sum_total = rowSums(revenue_df[, stringr::str_detect(colnames(revenue_df), "^g90_amount")], na.rm = TRUE)) %>%
+                g30_amount.sum_total = rowSums(revenue_df[, stringr::str_detect(colnames(revenue_df), "^g30_amount")], na.rm = TRUE)) %>%
         dplyr::filter(amount_type.code == "AUDA")
 
 xvals <- scatter_init %>%
         dplyr::group_by(demarcation.code) %>%
-        dplyr::summarise(debt_outstanding = dplyr::first(g90_amount.sum_total[period == 2022]),
+        dplyr::summarise(debt_outstanding = dplyr::first(g30_amount.sum_total[period == 2022]),
                         .groups = "drop") %>%
         dplyr::filter(!is.na(debt_outstanding) & debt_outstanding > 10000 )
 
@@ -1061,6 +1461,8 @@ scatter_df <- dplyr::inner_join(dplyr::inner_join(xvals, yvals, by = "demarcatio
                                 ratio = debt_writtenoff / debt_outstanding) 
 
 summary(scatter_df$ratio)
+
+
 
 fmt <- scales::label_number(big.mark = " ", accuracy = 1)
 
@@ -1253,3 +1655,273 @@ datawrapper_table <- map_data_df %>%
 
 csvpath <- paste0(output_dir, "/receivables.csv")
 utils::write.csv(datawrapper_table, csvpath, row.names = FALSE)
+
+
+####
+## Collection Rates
+####
+
+closing_balances <- revenue_df %>%
+        dplyr::filter(amount_type.code == "AUDA") %>%
+        dplyr::mutate(period = period + 1) %>%
+        dplyr::select(period, demarcation.code, dplyr::matches("total_amount\\.sum")) %>%
+        dplyr::mutate(total_amount.sum = rowSums(dplyr::pick(dplyr::matches("total_amount\\.sum")), na.rm = FALSE)) %>%
+        dplyr::rename_with(~paste0("prev_", .x), .cols = dplyr::matches("total_amount\\.sum"))
+
+check <- revenue_df %>%
+        dplyr::filter(amount_type.code == "AUDA") %>%
+        dplyr::left_join(closing_balances, by = c("period", "demarcation.code")) %>%
+        dplyr::mutate(oprev = rowSums(dplyr::pick(c(4:21, 23:28)), na.rm = TRUE), 
+                        total_amount.sum = rowSums(dplyr::pick(dplyr::matches("total_amount\\.sum")), na.rm = FALSE), 
+                        bad_amount.sum = rowSums(dplyr::pick(dplyr::matches("bad_amount\\.sum")), na.rm = FALSE)) %>%
+        dplyr::filter(# total_amount.sum_1500 - prev_total_amount.sum_1300 > service_charges_electricity, 
+                        # total_amount.sum_1200 - prev_total_amount.sum_1200  > service_charges_water |
+                        # total_amount.sum_1600 - prev_total_amount.sum_1600  > service_charges_waste_management |
+                        # total_amount.sum_1500 - prev_total_amount.sum_1500  > service_charges_waste_water_management |
+                        total_amount.sum_1400 - prev_total_amount.sum_1400  > property_rates, 
+                        period >= 2025) %>%
+        dplyr::select(dplyr::matches("property|total_amount.sum_1400|prev_total_amount.sum_1400"))
+
+print(nrow(check))
+
+print(head(check))
+
+collections_df <- revenue_df %>%
+        dplyr::filter(amount_type.code == "AUDA") %>%
+        dplyr::mutate(oprev = rowSums(dplyr::pick(c(4:21, 23:28)), na.rm = TRUE), 
+                        total_amount.sum = rowSums(dplyr::pick(dplyr::matches("total_amount\\.sum")), na.rm = FALSE), 
+                        bad_amount.sum = rowSums(dplyr::pick(dplyr::matches("bad_amount\\.sum")), na.rm = FALSE)) %>%
+        dplyr::select(demarcation.code, demarcation.label, period, oprev, service_charges_electricity, service_charges_water, service_charges_waste_management, service_charges_waste_water_management, dplyr::matches("total_amount\\.sum|bad_amount\\.sum"), irrecoverable_debts_written_off, "property_rates") %>%
+        dplyr::left_join(closing_balances, by = c("period", "demarcation.code")) %>%
+        dplyr::mutate(total_collection = ifelse(total_amount.sum - prev_total_amount.sum < oprev & dplyr::if_all(c(prev_total_amount.sum, oprev, total_amount.sum), ~ .x > 0), ((prev_total_amount.sum + oprev - total_amount.sum) / oprev) * 100, NA_real_), 
+                      electricity_collection = ifelse(total_amount.sum_1300 - prev_total_amount.sum_1300 < service_charges_electricity & dplyr::if_all(c(prev_total_amount.sum_1300, service_charges_electricity, total_amount.sum_1300), ~ .x > 0), ((prev_total_amount.sum_1300 + service_charges_electricity - total_amount.sum_1300 + irrecoverable_debts_written_off) / service_charges_electricity) * 100, NA_real_),
+                      water_collection = ifelse(total_amount.sum_1200 - prev_total_amount.sum_1200 < service_charges_water & dplyr::if_all(c(prev_total_amount.sum_1200, service_charges_water, total_amount.sum_1200), ~ .x > 0), ((prev_total_amount.sum_1200 + service_charges_water - total_amount.sum_1200) / service_charges_water) * 100, NA_integer_),
+                      waste_collection = ifelse(total_amount.sum_1600 - prev_total_amount.sum_1600 < service_charges_waste_management & dplyr::if_all(c(prev_total_amount.sum_1600, service_charges_waste_management, total_amount.sum_1600), ~ .x > 0), ((prev_total_amount.sum_1600 + service_charges_waste_management - total_amount.sum_1600) / service_charges_waste_management) * 100, NA_real_),
+                      wastewater_collection = ifelse(total_amount.sum_1500 - prev_total_amount.sum_1500 < service_charges_waste_water_management & dplyr::if_all(c(prev_total_amount.sum_1500, service_charges_waste_water_management, total_amount.sum_1500),~ .x > 0), ((prev_total_amount.sum_1500 + service_charges_waste_water_management - total_amount.sum_1500) / service_charges_waste_water_management) * 100, NA_real_),
+                      rates_collection = ifelse(total_amount.sum_1400 - prev_total_amount.sum_1400 < property_rates& dplyr::if_all(c(prev_total_amount.sum_1400, property_rates, total_amount.sum_1400),~ .x > 0), ((prev_total_amount.sum_1400 + property_rates - total_amount.sum_1400) / property_rates) * 100, NA_real_)) %>%
+        dplyr::filter(period == 2025 & !is.na(electricity_collection)) %>%
+        dplyr::select(demarcation.code, dplyr::matches("_collection$"))
+
+collections_csv <- collections_df %>%
+        dplyr::full_join(munic_list %>% dplyr::select(demarcation.code, municipality.province_code, demarcation.label), by = "demarcation.code") %>%
+        dplyr::select(demarcation.label, municipality.province_code, dplyr::matches("collection$")) %>%
+        dplyr::rename(`Municipality` = `demarcation.label`,
+                        `Province` = municipality.province_code,
+                        `Total` = `total_collection`, 
+                        `Water` = `water_collection`, 
+                        `Electricity` = `electricity_collection`, 
+                        `Property Rates` = `rates_collection`, 
+                        `Waste` = `waste_collection`, 
+                        `Waste Water` = `wastewater_collection`)
+
+nrow(collections_csv[(collections_csv$Total > 95 & !is.na(collections_csv$Total)), ])
+                
+write.csv(collections_csv, file = paste0(output_dir, "/collections.csv"))
+
+matched <- collections_df %>%
+  dplyr::filter(period %in% c(2021, 2025) & !is.na(water_collection)) %>%
+  dplyr::group_by(demarcation.code) %>%
+  dplyr::filter(dplyr::n_distinct(period) == 2) %>%
+  dplyr::ungroup() %>%
+  tidyr::pivot_wider(id_cols = demarcation.code, 
+                        names_from = period, 
+                        values_from = 3:last_col())
+
+
+####
+## 2020/21 and 2024/25 bar charts side by side
+####
+
+if (TRUE){
+debt_totals <- debt %>%
+        dplyr::select(dplyr::any_of(c("customer_group.code", "financial_period.period", "item.code", "demarcation.code", "total_amount.sum", "badi_amount.sum", "bad_amount.sum", "g1_amount.sum")),
+                        dplyr::matches("^l"), amount_type.code) %>%
+        dplyr::rename(period = financial_period.period) %>%
+        dplyr::filter(amount_type.code == "AUDA" & !stringr::str_detect(stringr::str_sub(demarcation.code, 1, 2), "DC")) %>%
+        dplyr::group_by(demarcation.code, period) %>%
+        dplyr::summarise(
+                        dplyr::across(c(dplyr::any_of(c("total_amount.sum", "badi_amount.sum", "bad_amount.sum", "g1_amount.sum")), dplyr::matches("^l")),
+                         ~sum(.x, na.rm = TRUE))) %>%
+        dplyr::mutate(across(c("g1_amount.sum", dplyr::matches("^l")), ~.x / total_amount.sum * 100, .names = "{stringr::str_remove(.col, 'amount.sum')}pct"))
+
+distribution_compared <- debt_totals %>% 
+        dplyr::left_join(debt_totals %>%
+                        dplyr::transmute(demarcation.code, 
+                                        period = period + 1, 
+                                        prev_book = g1_amount.sum + l1_amount.sum + l30_amount.sum + l60_amount.sum +
+                                   l90_amount.sum + l120_amount.sum + l150_amount.sum + l180_amount.sum), 
+                                   by = c("demarcation.code", "period")) %>% 
+        dplyr::mutate(outst_pct = g1_amount.sum / prev_book) %>%
+        tidyr::pivot_longer(!c(period, demarcation.code),
+                names_to = "type",
+                values_to = "value") %>%
+        dplyr::mutate(type = case_when(type %in% c("l30_pct", "l60_pct", "l90_pct", "l120_pct", "l150_pct", "l180_pct") ~ "l180_pct", 
+                        TRUE ~ type)) %>%
+        dplyr::filter(type %in% c("l180_pct", "l1_pct", "g1_pct", "badi_pct", "bad_pct", "collectability_i", "collectability_a", "outst_pct")) %>%
+        dplyr::filter(period %in% c(2021, 2025) & type == "outst_pct" & is.finite(value)) %>%
+        dplyr::mutate(value_raw_i = value, 
+                        value = ifelse(value > 1, 1, value),
+                        decile = floor(value / 0.1), 
+                        decile = pmax(floor(value / 0.1), -1))
+
+
+count_df <- distribution_compared %>%
+        dplyr::group_by(period, decile) %>%
+        dplyr::summarise(n = dplyr::n()) 
+
+total_df <- count_df %>% 
+        dplyr::group_by(period) %>%
+        dplyr::summarise(n_total = sum(n, na.rm = TRUE)) 
+
+count_df <- dplyr::left_join(count_df, total_df, by = "period")  %>%
+        dplyr::mutate(n_pct = n / n_total) 
+
+aged_debt_df <- distribution_compared %>% 
+                dplyr::filter(value_raw_i < 10 & value_raw_i > 0) %>%
+                dplyr::group_by(period) %>%
+                dplyr::summarise(raw_mean = mean(value_raw_i, na.rm = TRUE),
+                                raw_median = median(value_raw_i, na.rm = TRUE)) %>%
+                dplyr::full_join(count_df, by = "period")
+
+bins <- sort(unique(aged_debt_df$decile))
+
+label_map_aged_debt <- setNames(c(" ", "0% - 10%", "11% - 20%", "21% - 30%", "31% - 40%", "41% - 50%", "51% - 60%", "61% - 70%", "71% - 80%", "81% - 90%", "91% - 100%", "> 100%"), bins)
+
+names(label_map_aged_debt)
+
+mean_x <- round(plot_data$raw_mean[1], digits = 3) * 10
+
+median_x <- round(plot_data$raw_median[1], digits = 3) * 10
+
+nobs <- paste0(nrow(distribution_compared %>% dplyr::filter(period == year & !is.na(value_raw_i))), "/", 213)
+
+plot_data <- aged_debt_df %>%
+  dplyr::filter(decile >= 0) %>%
+  dplyr::mutate(period = factor(period)) %>%
+  tidyr::complete(period, decile = 0:9, fill = list(n_pct = 0))
+
+stats_df <- aged_debt_df %>% 
+        dplyr::ungroup() %>%
+        dplyr::group_by(period) %>% 
+        dplyr::select(period, raw_mean, raw_median) %>%
+        dplyr::mutate(nobs = dplyr::n(), .groups = "drop") %>%
+        dplyr::mutate(period = factor(period, levels = levels(plot_data$period)))
+
+period_colour_map <- setNames(c("#C9A66B", "#5C8A5A"), levels(plot_data$period))
+
+max_y <- max(plot_data$n_pct)
+
+make_bin_labels <- function(bins, width = 0.1, cap = 1) {
+  top <- floor(cap / width)          # the bin that capped values fall into (10)
+  dplyr::case_when(
+    bins < 0    ~ "< 0%",
+    bins >= top ~ paste0("\u2265 ", cap * 100, "%"),
+    TRUE        ~ paste0(bins * width * 100, "% - ", (bins + 1) * width * 100, "%")
+  )
+}
+
+make_bin_labels(-1:10)
+
+print(max_y)
+
+debthist_temp <- ggplot(data = plot_data %>% dplyr::filter(decile >= 0), aes(x = decile, y = n_pct, fill = period, colour = period)) +
+        geom_col(position = position_dodge(width = 0.8), width = 0.8) +
+        geom_vline(aes(colour = period, xintercept  = pmin(raw_mean, 10) * 10), 
+                        linetype = "solid", 
+                        linewidth = 0.75) + 
+        geom_vline(aes(colour = period, xintercept  = pmin(raw_median, 10) * 10), 
+                        linetype = "dashed", 
+                        linewidth = 0.75) +
+        geom_text(data = ~ dplyr::distinct(.x, period, raw_mean, raw_median) %>% dplyr::filter(!is.na(raw_mean)),
+          aes(x = pmin(raw_mean * 10, 10), y = 0.275, colour = period,
+                hjust = 1.1,
+                vjust = ifelse(period == levels(period)[1], 0, 2.5),
+                label = paste0("mean: ",
+                             ifelse(raw_mean < 1, round(raw_mean * 100, 1), "> 100"), "%")),
+                size = 3, inherit.aes = FALSE, show.legend = FALSE) +
+        geom_text(data = ~ dplyr::distinct(.x, period, raw_mean, raw_median) %>% dplyr::filter(!is.na(raw_median)),
+          aes(x = pmin(raw_median * 10, 10), y = 0.225, colour = period,
+                hjust = 1.1,
+                vjust = ifelse(period == levels(period)[1], 0, 2.5),
+                label = paste0("median: ",
+                             ifelse(raw_median < 1, round(raw_median * 100, 1), "> 100"), "%")),
+                size = 3, inherit.aes = FALSE, show.legend = FALSE) +
+        scale_x_continuous(breaks = 0:10,
+                        labels = function(b) ifelse((b + 1) %% 3 == 1, make_bin_labels(b), ""), 
+                        expand = c(0.01, 0.01)) +
+        scale_y_continuous(limits = c(0, 0.35), 
+                minor_breaks = scales::breaks_pretty(n = 6),
+                labels  = function(x) ifelse(x == 0, "", x * 100),
+                expand = expansion(mult = c(0, 0))) +
+        scale_fill_manual(values = period_colour_map, name = NULL) +
+        scale_colour_manual(values = period_colour_map, name = NULL) +
+        labs(y = "Percentage of Municipalities",
+                x = "Percentage of debt outstanding for over 1 year", 
+                title = "All") +
+        coord_cartesian(xlim = c(-0.5, 10.5)) +
+        substack_theme +
+        theme( panel.grid.minor = element_blank(), 
+                plot.title.position = "panel", 
+                plot.title = element_text(colour = "#1F2A24", size = rel(1), hjust = 0.5, face = "plain"),
+                panel.border = element_blank()) 
+
+debthist_temp
+
+aged_debt <- list()
+aged_debt[["all"]] <- debthist_temp
+
+debt <- dplyr::left_join(debt, revenue_df %>% dplyr::distinct(demarcation.code, revenue_group), by = "demarcation.code" )
+
+for (i in 1:nrow(revenue_source_df)){
+
+        itemcode <- revenue_source_df$code[i]
+
+        title_id <- revenue_source_df$title[i]
+        
+        file_id <- gsub(" ", "_", tolower(title_id))
+
+        plot_title <- paste0("Percentage of ", title_id, " debt unresolved\nfrom previous year by Municipality, 2021/22 - 2024/25")
+
+        if (stringr::str_detect(file_id, "water")){
+                debt_totals <- debt %>%
+                        dplyr::select(dplyr::any_of(c("customer_group.code", "financial_period.period", "item.code", "demarcation.code", "total_amount.sum", "badi_amount.sum", "bad_amount.sum", "g1_amount.sum")),
+                                        dplyr::matches("^l"), amount_type.code, revenue_group) %>%
+                        dplyr::filter(amount_type.code == "AUDA" & 
+                                        item.code == itemcode &
+                                        !stringr::str_detect(stringr::str_sub(demarcation.code, start = 1, end = 2), "DC") &
+                                        !stringr::str_detect(revenue_group, "C2")) %>%
+                        dplyr::rename(period = financial_period.period) %>%
+                        dplyr::group_by(demarcation.code, period) %>%
+                        dplyr::summarise(
+                                        dplyr::across(c(dplyr::any_of(c("total_amount.sum", "badi_amount.sum", "bad_amount.sum", "g1_amount.sum")), dplyr::matches("^l")),
+                                        ~sum(.x, na.rm = TRUE)), .groups = "drop") %>%
+                        dplyr::mutate(book = g1_amount.sum + l1_amount.sum + l30_amount.sum + l60_amount.sum +
+                        l90_amount.sum + l120_amount.sum + l150_amount.sum + l180_amount.sum) %>%
+                        dplyr::filter(book > 0) %>%
+                        dplyr::mutate(across(c("g1_amount.sum", dplyr::matches("^l")), ~.x / total_amount.sum * 100, .names = "{stringr::str_remove(.col, 'amount.sum')}pct")) %>%
+                        dplyr::filter(total_amount.sum >= 0)
+
+                        nobs_raw <- nrow(revenue_df %>% dplyr::distinct(demarcation.code, revenue_group) %>% dplyr::filter(!stringr::str_detect(revenue_group, "C2")))
+
+                } else{
+                debt_totals <- debt %>%
+                        dplyr::select(dplyr::any_of(c("customer_group.code", "financial_period.period", "item.code", "demarcation.code", "total_amount.sum", "badi_amount.sum", "bad_amount.sum", "g1_amount.sum")),
+                                        dplyr::matches("^l"), amount_type.code, revenue_group) %>%
+                        dplyr::filter(amount_type.code == "AUDA" & 
+                                        item.code == itemcode &
+                                        !stringr::str_detect(stringr::str_sub(demarcation.code, start = 1, end = 2), "DC")) %>%
+                        dplyr::rename(period = financial_period.period) %>%
+                        dplyr::group_by(demarcation.code, period) %>%
+                        dplyr::summarise(
+                                        dplyr::across(c(dplyr::any_of(c("total_amount.sum", "badi_amount.sum", "bad_amount.sum", "g1_amount.sum")), dplyr::matches("^l")),
+                                        ~sum(.x, na.rm = TRUE)), .groups = "drop") %>%
+                        dplyr::mutate(book = g1_amount.sum + l1_amount.sum + l30_amount.sum + l60_amount.sum +
+                        l90_amount.sum + l120_amount.sum + l150_amount.sum + l180_amount.sum) %>%
+                        dplyr::filter(book > 0) %>%
+                        dplyr::mutate(across(c("g1_amount.sum", dplyr::matches("^l")), ~.x / total_amount.sum * 100, .names = "{stringr::str_remove(.col, 'amount.sum')}pct")) %>%
+                        dplyr::filter(total_amount.sum >= 0)
+
+                        nobs_raw <- nrow(revenue_df %>% dplyr::distinct(demarcation.code, revenue_group))
+                }
+
+        
