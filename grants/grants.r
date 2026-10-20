@@ -52,7 +52,7 @@ hh_sz <- readr::read_csv(here::here(census_dir, "Census2022sample_F21.csv")) %>%
         dplyr::summarize(hhsz = n_distinct(PID))
 
 hh_wgt <- readr::read_csv(here::here(census_dir, "Census2022sample_F19.csv")) %>%
-        dplyr::select(QID, HH_WGT, H05_WATERPIPED, H09_ENERGY_COOKING) %>%
+        dplyr::select(QID, HH_WGT, H05_WATERPIPED, H09_ENERGY_COOKING, H01_QUARTERS) %>%
         dplyr::mutate(socio = case_when(
                 H05_WATERPIPED %in% c(1, 2) & H09_ENERGY_COOKING == 1 ~ 1, 
                 TRUE ~ 0) * HH_WGT) %>%
@@ -166,17 +166,26 @@ drilldown_grants <- paste("amount_type.code",
                         "demarcation.code",
                         "period_length.length",  sep  = "|")
 
+drilldown_grants_act <- paste("amount_type.code",
+                          "financial_year_end.year",
+                          "grant.code",
+                          "grant.label",
+                          "demarcation.code", sep = "|")
+
+
 fetch_data_grants <- function(year = 2025, 
                         amount_type = "AUDA", 
                         url = "https://municipaldata.treasury.gov.za/api/cubes/grants_v2/aggregate", 
                         drilldown = drilldown_grants,
                         pagesize = 5000, 
+                        period_length = "year", 
                         page = 1, 
-                        grantcode = item){
+                        grantcode = item 
+                        ){
 
   base_url <- url
   
-  cut <- sprintf('financial_year_end.year:%d|period_length.length:"%s"|grant.code:"%s"|amount_type.code:"%s"', year, "year", grantcode, amount_type)
+  cut <- sprintf('financial_year_end.year:%d|period_length.length:"%s"|grant.code:"%s"|amount_type.code:"%s"', year, period_length, grantcode, amount_type)
 
   page <- 1 
 
@@ -209,6 +218,7 @@ fetch_data_grants <- function(year = 2025,
 
 }
 
+
 resp_grants <- httr::GET("https://municipaldata.treasury.gov.za/api/cubes/grants_v2/members/grant")
 
 items_grants <- jsonlite::fromJSON(httr::content(resp_grants, "text", encoding = "UTF-8"))
@@ -222,103 +232,149 @@ itemcodes_grants <- items_grants$data %>%
 
 itemcodes_grants_vect <- paste(itemcodes_grants, collapse = '";"')
 
-nt_grants <- list()
+nt_grants <- lapply(setNames(nm = as.character(2021:2025)),
+                    function(y) list(ORGB = NULL, ADJB = NULL, ACT = NULL))
 
-for (year in c(2020:2024)){
+for (year in c(2021:2024)){
         for (budget in c("ORGB", "ADJB")){
             temp_df <- fetch_data_grants(year = year,
-                                            amount_type = budget, 
-                                            grantcode = itemcodes_grants_vect
-                                            )
+                                        period_length = if (budget != "ACT") "year" else "month",
+                                        drilldown = if (budget != "ACT") drilldown_grants else drilldown_grants_act,
+                                        amount_type = budget, 
+                                        grantcode = itemcodes_grants_vect)
+
+                temp_df <- temp_df %>%
+                        dplyr::rename(period = financial_year_end.year) %>%
+                        dplyr::mutate(period = as.character(period)) %>%
+                        dplyr::select(-c("grant.code"))
 
             nt_grants[[as.character(year)]][[budget]] <- temp_df
             message(paste0(year, ", ", budget))
                                     }
 }
 
-
-nt_grants[["2025"]] <- c()
-
 drop_rows <- c("Total", "R thousands", "Summary by Category of Municipality",
                "Category classification", "Category A", "Category B", "Category C",
                "Unallocated", "Summary by Provincial Departments",
                "Transfers by Provincial Departments to Municipalities( Agency services)")
 
-for (demcode in unique(munic_list$demarcation.code)){
 
-        xl_file <- readxl::read_excel(path = "/Users/jansmuts/Desktop/PersonalProjects/municipalities/data/ccg_2425.xlsx", sheet = demcode, range = "A7:E96") #%>%
-                        
-        xl_file$demarcation.code <-  demcode
+data_dir <- "/Users/jansmuts/Desktop/PersonalProjects/municipalities/data/"
+msoff    <- "/opt/anaconda3/bin/msoffcrypto-tool"
 
+prep_file <- function(path) {
+  readable <- tryCatch({ readxl::excel_sheets(path); TRUE }, error = function(e) FALSE)
+  if (readable) return(path)
 
-        xl_file <- xl_file %>%
-                dplyr::rename(grant.label = `R thousands`, 
-                                amount_ORGB = `Division of revenue Act No. 24 of 2024`, 
-                                amount_ADJB = `Total Available 2024/25`) %>%
-                dplyr::select(demarcation.code, grant.label, amount_ORGB, amount_ADJB) %>%
-                dplyr::mutate(grant.label = dplyr::case_when(
-                                grant.label == "Programme and Project Preperation Support Grant"      ~ "Programme and project preparation support grant",
-                                grant.label == "Smart Meter Grant (Schedule 6B)"                      ~ "Smart Meter Grant",
-                                grant.label == "Municipal Systems Improvement Grant (Schedule 5B)"    ~ "Municipal Systems Improvement Grant",
-                                grant.label == "Municipal Systems Improvement Grant (Schedule 6B)"    ~ "Municipal Systems Improvement Grant (Sched 6)",
-                                grant.label == "Water Services Infrastructure Grant (Schedule 5B)"    ~ "Water Services Infrastructure Grant",
-                                grant.label == "Water Services Infrastructure Grant (Schedule 6B)"    ~ "Water Services Infrastructure Grant (Sched 6)",
-                                grant.label == "Municipal Infrastructure Grant (Schedule 6B)"         ~ "Municipal Infrastructure Grant (Indirect)",
-                                grant.label == "Informal Settlements Upgrading Partnership Grant (Schedule 5B)" ~ "Urban Settlement Development Grant",
-                                stringr::str_detect(grant.label, "^Regional Bulk Infrastructure Grant")     ~ "Regional Bulk Infrastructure Grant",
-                                stringr::str_detect(grant.label, "^Municipal Demarcation Transition Grant") ~ "Municipal Demarcation Transition Grant",
-                                grant.label %in% drop_rows ~ NA_character_,
-                                TRUE ~ grant.label)) %>%
-                dplyr::filter(!is.na(grant.label), !(stringr::str_detect(grant.label, "Sub-Total|\\(Vote|NA"))) %>%
-                dplyr::group_by(grant.label, demarcation.code) %>%
-                dplyr::summarise(dplyr::across(c(amount_ORGB, amount_ADJB), 
-                                        ~ sum(as.numeric(.x), na.rm = TRUE)), 
-                                        .groups = "drop")
-
-        xl_file$period <-  "2025"
-
-        nt_grants[["2025"]] <- rbind(nt_grants[["2025"]], xl_file)
+  tmp <- tempfile()
+  system2(msoff, c("-p", "VelvetSweatshop", shQuote(path), shQuote(tmp)))
+  src <- if (file.exists(tmp)) tmp else path   # not encrypted, just wrong extension
+  out <- paste0(tools::file_path_sans_ext(path), "_dec.",
+                readxl::format_from_signature(src))
+  file.copy(src, out, overwrite = TRUE)
+  out
 }
+
+for (period in c("2021.xls", "2122.xlsx", "2223.xlsx", "2324.xlsx", "2425.xlsx")){
+
+        for (demcode in unique(munic_list$demarcation.code)){
+
+                fy_period <- paste0("20", stringr::str_sub(period, start = 3, end = 4))
+
+                raw_path <- paste0("/Users/jansmuts/Desktop/PersonalProjects/municipalities/data/ccg_", period)
+
+                xl_path <- prep_file(raw_path)
+
+                xl_file <- readxl::read_excel(path = xl_path, sheet = demcode, range = "A7:Q96") #%>%
+                                
+                xl_file$demarcation.code <-  demcode
+        
+                xl_df <- xl_file %>%
+                        dplyr::rename(grant.label = `R thousands`, 
+                                        amount_ORGB = dplyr::starts_with("Division of revenue Act"), 
+                                        amount_ADJB = dplyr::starts_with("Total Available"), 
+                                        amount_ACT = 17) %>%
+                        dplyr::select(demarcation.code, grant.label, amount_ORGB, amount_ADJB, amount_ACT) %>%
+                        dplyr::mutate(grant.label = dplyr::case_when(
+                                        grant.label == "Programme and Project Preperation Support Grant"      ~ "Programme and project preparation support grant",
+                                        grant.label == "Smart Meter Grant (Schedule 6B)"                      ~ "Smart Meter Grant",
+                                        grant.label == "Municipal Systems Improvement Grant (Schedule 5B)"    ~ "Municipal Systems Improvement Grant",
+                                        grant.label == "Municipal Systems Improvement Grant (Schedule 6B)"    ~ "Municipal Systems Improvement Grant (Sched 6)",
+                                        grant.label == "Water Services Infrastructure Grant (Schedule 5B)"    ~ "Water Services Infrastructure Grant",
+                                        grant.label == "Water Services Infrastructure Grant (Schedule 6B)"    ~ "Water Services Infrastructure Grant (Sched 6)",
+                                        grant.label == "Municipal Infrastructure Grant (Schedule 6B)"         ~ "Municipal Infrastructure Grant (Indirect)",
+                                        grant.label == "Informal Settlements Upgrading Partnership Grant (Schedule 5B)" ~ "Urban Settlement Development Grant",
+                                        stringr::str_detect(grant.label, "^Regional Bulk Infrastructure Grant")     ~ "Regional Bulk Infrastructure Grant",
+                                        stringr::str_detect(grant.label, "^Municipal Demarcation Transition Grant") ~ "Municipal Demarcation Transition Grant",
+                                        grant.label %in% drop_rows ~ NA_character_,
+                                        TRUE ~ grant.label)) %>%
+                        dplyr::filter(!is.na(grant.label), !(stringr::str_detect(grant.label, "Sub-Total|\\(Vote|NA"))) %>%
+                        dplyr::group_by(grant.label, demarcation.code) %>%
+                        dplyr::summarise(dplyr::across(c(amount_ORGB, amount_ADJB, amount_ACT), 
+                                                ~ sum(as.numeric(.x), na.rm = TRUE)), 
+                                                .groups = "drop")
+
+                xl_df$period <-  fy_period
+
+                nt_grants[[fy_period]][["ACT"]] <- rbind(nt_grants[[fy_period]][["ACT"]], xl_df)
+                message(paste0("Year: ", fy_period, " DC: ", demcode))
+        }
+}
+
+
+nt_grants[["2024"]][["ACT"]]
 
 df_grants <- c()
 
-temp_df <- dplyr::bind_rows(nt_grants[["2021"]]) 
-
 for (year in names(nt_grants)){
-        temp_df <- dplyr::bind_rows(nt_grants[[year]]) 
 
         if (year != "2025"){
+        orgb <- nt_grants[[year]][["ORGB"]] %>%
+                dplyr::summarise(amount_ORGB = sum(as.numeric(amount.sum), na.rm = TRUE), .by = c("demarcation.code", "grant.label"))
+
+        adjb <- nt_grants[[year]][["ADJB"]] %>%
+                dplyr::summarise(amount_ADJB = sum(as.numeric(amount.sum), na.rm = TRUE), .by = c("demarcation.code", "grant.label"))
+
+        act  <- nt_grants[[year]][["ACT"]] %>%
+                dplyr::select(c("demarcation.code", "grant.label"), amount_ACT)
+
+        temp_df <- orgb %>%
+                dplyr::full_join(adjb, by = c("demarcation.code", "grant.label")) %>%
+                dplyr::full_join(act,  by = c("demarcation.code", "grant.label")) %>%
+                dplyr::mutate(period = as.character(year))
+
         temp_df <- temp_df %>%
-                dplyr::rename(period = financial_year_end.year) %>%
-                dplyr::group_by(demarcation.code, period, grant.label) %>%
-                tidyr::pivot_wider(id_cols = c(demarcation.code, period, grant.code, grant.label),
-                                names_from = amount_type.code, 
-                                values_from = amount.sum, 
-                                names_prefix = paste0("amount_")) %>%
                 dplyr::mutate(grant.label = dplyr::case_when(
                                 stringr::str_detect(grant.label, "^Regional Bulk Infrastructure Grant")     ~ "Regional Bulk Infrastructure Grant",
                                 stringr::str_detect(grant.label, "^Municipal Demarcation Transition Grant") ~ "Municipal Demarcation Transition Grant",
                                 TRUE ~ grant.label
                 )) %>%
                 dplyr::filter(demarcation.code %in% munic_list$demarcation.code) %>%
-                dplyr::summarise(dplyr::across(c(amount_ORGB, amount_ADJB), 
+                dplyr::group_by(demarcation.code, grant.label, period) %>%
+                dplyr::summarise(dplyr::across(c(amount_ORGB, amount_ADJB, amount_ACT), 
                                         ~ sum(as.numeric(.x), na.rm = TRUE)), 
                                         .groups = "drop")
         } else {
+                temp_df  <- nt_grants[[year]][["ACT"]] %>%
+                        dplyr::select(demarcation.code, grant.label, period, amount_ORGB, amount_ADJB, amount_ACT) 
+
                 lges_df <-  readr::read_csv(here::here("data", "lges_2025.csv")) 
 
                 lges_df$`grant.label` <- "Local Government Equitable Share"
-                lges_df <- lges_df %>%
-                                dplyr::mutate(amount_ORGB = amount_ADJB)
 
-                temp_df <- rbind(temp_df, lges_df)
+                lges_df <- lges_df %>%
+                                dplyr::mutate(amount_ORGB = amount_ADJB,
+                                        amount_ACT = amount_ADJB, 
+                                        period = as.character(year)) 
+
+                temp_df <- dplyr::bind_rows(temp_df, lges_df)
 
                 temp_df <- temp_df %>%
                         dplyr::filter(demarcation.code %in% munic_list$demarcation.code) 
 
         }
 
-        df_grants <- rbind(df_grants, temp_df)
+        df_grants <- dplyr::bind_rows(df_grants, temp_df)
 }
 
 
@@ -335,7 +391,7 @@ departments <- c("Health",
 totals_df <- df_grants %>%
         dplyr::filter(!(grant.label %in% departments)) %>%
         dplyr::group_by(demarcation.code, period) %>%
-        dplyr::summarise(dplyr::across(c(amount_ORGB, amount_ADJB), 
+        dplyr::summarise(dplyr::across(c(amount_ORGB, amount_ADJB, amount_ACT), 
                         ~sum(.x, na.rm = TRUE))) %>%
         dplyr::mutate(grant.label = "total_grants")
 
@@ -415,6 +471,7 @@ itemcodes_rev_full <- items_rev$data %>%
 
 collapsed <- lapply(list(itemcodes_rev = itemcodes_rev, 
                         itemcodes_rev_full = itemcodes_rev_full), function(x) paste(x, collapse = '";"'))
+
 print(collapsed$itemcodes_rev)
 
 code_cols <- c("1550","1570", "1590", stringr::str_pad(as.integer(seq(0, 2800, by = 100)), width = 4, pad = "0"))
@@ -449,7 +506,7 @@ for (year in c(2021:2025)){
 
         # }
             nt_revenue[[as.character(year)]] <- temp_df
-            message(paste0(year, ", ", budget))
+            message(paste0(year))
                                     }
 
 temp_rev <- dplyr::bind_rows(nt_revenue) 
@@ -470,11 +527,11 @@ rev_df <- temp_rev %>%
         dplyr::select(demarcation.code, period, total_revenue, total_revenue_excluding_capital_transfers_and_contributions) %>%
         tidyr::pivot_longer(!c(demarcation.code, period),
                         names_to = "label", 
-                        values_to = "amount_ADJB")
+                        values_to = "amount_ADJB") 
 
-grants_df <- dplyr::bind_rows(df_grants %>% dplyr::rename(label = grant.label), rev_df) %>%
+grants_df <- dplyr::bind_rows(df_grants %>% dplyr::rename(label = grant.label) %>% dplyr::mutate(period = as.character(period)), rev_df) %>%
                 dplyr::filter(as.numeric(period) >= 2021) %>%
-                dplyr::left_join(munic_list %>% dplyr::select(demarcation.code, demarcation.label, municipality.miif_category, district.miif_category), by = "demarcation.code") %>%
+                dplyr::left_join(munic_list %>% dplyr::select(demarcation.code, demarcation.label, municipality.miif_category, district.miif_category, hh_n, hh_socio), by = "demarcation.code") %>%
                 dplyr::mutate(revenue_group = case_when(municipality.miif_category == "A" ~ "A",
                                         municipality.miif_category == "B1" ~ "B1",
                                         municipality.miif_category == "B2" & district.miif_category == "C1" ~ "B2/C1",
@@ -482,10 +539,11 @@ grants_df <- dplyr::bind_rows(df_grants %>% dplyr::rename(label = grant.label), 
                                         municipality.miif_category == "B3" & district.miif_category == "C1" ~ "B3/C1",
                                         municipality.miif_category == "B3" & district.miif_category == "C2" ~ "B3/C2",
                                         municipality.miif_category == "B4" & district.miif_category == "C1" ~ "B4/C1",
-                                        municipality.miif_category == "B4" & district.miif_category == "C2" ~ "B4/C2")) %>%
+                                        municipality.miif_category == "B4" & district.miif_category == "C2" ~ "B4/C2"), 
+                                hh_pov = hh_n - hh_socio) %>%
                 dplyr::select(!c(municipality.miif_category, district.miif_category))
 
-utils::write.csv(grants_df, here::here("data", "grants_df"))
+utils::write.csv(grants_df, here::here("data", "grants_df.csv"))
 
 }
 
@@ -497,7 +555,10 @@ utils::write.csv(grants_df, here::here("data", "grants_df"))
 
 ####################################################################################################################################################################################
 
+grants_df <- readr::read_csv(here::here("data", "grants_df.csv"))
+
 bar_df <- grants_df %>%
+        dplyr::mutate(period = as.character(period)) %>%
         dplyr::filter(!(label %in% c("total_revenue_excluding_capital_transfers_and_contributions", "total_transfers", "share", departments, "total_grants", "total_revenue"))) %>%
         dplyr::select(period, amount_ADJB, label) %>%
         dplyr::group_by(period, label) %>%
@@ -775,75 +836,70 @@ hover_path <- paste0(output_dir, "/scatterplot_hover.html")
 scatter_html_path <- paste0(output_dir, "/scatterplot.html")
 htmlwidgets::saveWidget(scatter_hover, file = scatter_html_path, selfcontained = TRUE)
 
-
+print(unique(grants_df$label))
 
 ####
-## Difference between original and adjusted amounts (remember to exclude LSEG)
+## Difference between original and adjusted amounts (remember to exclude LSEG) by financial year
 ####
-
-
+ 
 col_df <- grants_df %>%
-        dplyr::select(demarcation.code, period, amount_ORGB, amount_ADJB, label) %>%
-        dplyr::filter(label %in% c("total_grants", "Local Government Equitable Share")) %>%
-        tidyr::pivot_wider(id_cols = c(demarcation.code, period), 
+        dplyr::select(demarcation.code, period, amount_ORGB, amount_ADJB, amount_ACT, label, revenue_group) %>%
+        dplyr::filter(label %in% c("total_grants", "Local Government Equitable Share", "Municipal Infrastructure Grant", "Urban Settlement Development Grant")) %>%
+        tidyr::pivot_wider(id_cols = c(demarcation.code, period, revenue_group), 
                         names_from = label, 
-                        values_from = c(amount_ORGB, amount_ADJB)) %>%
-        dplyr::mutate(ORGB_conditional = amount_ORGB_total_grants - `amount_ORGB_Local Government Equitable Share`, 
+                        values_from = c(amount_ORGB, amount_ADJB, amount_ACT)) %>%
+        dplyr::mutate(ORGB_infrastructure = ifelse(revenue_group != "A", `amount_ORGB_Municipal Infrastructure Grant`, `amount_ORGB_Urban Settlement Development Grant`), 
+                        ADJB_infrastructure = ifelse(revenue_group != "A", `amount_ADJB_Municipal Infrastructure Grant`, `amount_ADJB_Urban Settlement Development Grant`), 
+                        ACT_infrastructure = ifelse(revenue_group != "A",`amount_ACT_Municipal Infrastructure Grant`, `amount_ACT_Urban Settlement Development Grant`),
+                        ORGB_conditional = amount_ORGB_total_grants - `amount_ORGB_Local Government Equitable Share`, 
                         ADJB_conditional = amount_ADJB_total_grants - `amount_ADJB_Local Government Equitable Share`, 
-                        difference = ORGB_conditional - ADJB_conditional) 
-
-        dplyr::group_by(period, amount_type.code, demarcation.code) %>%
-        dplyr::summarise(dplyr::across(any_of(c(colnames(revenue_df))), ~sum(.x, na.rm = TRUE)), .groups = "drop") %>%
-        dplyr::group_by(period, demarcation.code) %>%
-        dplyr::filter(any(amount_type.code == "AUDA" & 
-                        rowSums(across(any_of(colnames(revenue_df[, 4:30]))), na.rm = TRUE) > 0)) %>%
-        dplyr::ungroup() %>%
-        dplyr::select(1:30, -demarcation.code) %>%
-        dplyr::group_by(period, amount_type.code) %>%
-        dplyr::summarise(across(c(any_of(c(colnames(revenue_df)))), ~sum(.x, na.rm = TRUE)), .groups = "drop") %>%
-        tidyr::pivot_longer(!c(period, amount_type.code), 
-                                        names_to = "type",
-                                        values_to = "value") %>%
-        tidyr::pivot_wider(names_from = amount_type.code) %>%
+                        ACT_conditional = amount_ACT_total_grants - `amount_ACT_Local Government Equitable Share`,
+                        difference = ADJB_conditional - ADJB_conditional, 
+                        difference_ACT = ifelse(dplyr::if_all(c("ACT_conditional", "ADJB_conditional"), ~.x > 0), ADJB_conditional - ACT_conditional, NA_integer_ ), 
+                        difference_infrastructure = ifelse(dplyr::if_all(c("ADJB_infrastructure", "ORGB_infrastructure"), ~.x > 0), ORGB_infrastructure - ADJB_infrastructure, NA_integer_), 
+                        difference_infrastructure_act = ifelse(dplyr::if_all(c("ACT_infrastructure", "ADJB_infrastructure"), ~.x > 0), ADJB_infrastructure - ACT_infrastructure, NA_integer_)) %>%
         dplyr::group_by(period) %>%
-        dplyr::summarise(across(c("AUDA", "ORGB"), ~sum(.x, na.rm = TRUE)), .groups = "drop") %>%
-        dplyr::mutate(difference = AUDA - ORGB, 
-                        pct = AUDA / ORGB * 100)
+        dplyr::summarise(dplyr::across(dplyr::matches("difference|ORGB_conditional|difference_infrastructure|ADJB|adjb|ORGB_infrastructure|ACT|act"), ~sum(.x, na.rm = TRUE)), .groups = "drop") %>%
+        dplyr::mutate(pct = ADJB_conditional / ORGB_conditional * 100, 
+                        pct_act = ACT_conditional / ADJB_conditional * 100, 
+                        pct_infrastructure = ADJB_infrastructure / ORGB_infrastructure * 100, 
+                        pct_infrastructure_act = ACT_infrastructure / ADJB_infrastructure * 100, 
+                        period = as.numeric(period))
 
-pct_min <- 95
-primary_min <- -10e+9
+pct_min <- 0
+primary_min <- 0
 
-pct_max <- 105
-primary_max <- 10e+9
+pct_max <- 100
+primary_max <- max(col_df$difference_ACT) * 1.1 
 
 pct_scale  <- (primary_max - primary_min) / (pct_max - pct_min)
 pct_offset <- primary_min - pct_scale * pct_min
 
-to_primary_pct   <- function(pct) pct_offset + pct * pct_scale
-to_secondary_pct <- function(primary_val) (primary_val - pct_offset) / pct_scale
-
-year_cols <- ggplot(data = col_df, aes(x = period, y = difference)) +
-            geom_col(data = col_df, aes(x = period, y = difference, fill = difference > 0)) +
-            geom_line(data = col_df, aes(x = period, y = to_primary_pct(pct)), linewidth = 1.5, linetype = "dashed") +
+# data = col_df, aes(x = period, y = difference_ACT)
+year_cols <- ggplot() +
+            geom_col(data = col_df, aes(x = period, y = difference_ACT, fill = difference_ACT > 0)) +
+            geom_line(data = col_df, aes(x = period, y = pct_act * pct_scale), linewidth = 1.5, linetype = "dashed") +
             scale_fill_manual(values = c("TRUE" = "#5C8A5A",  "FALSE" = "#8C5E58")) +
-            scale_y_continuous(name = "Difference (R Billion)",
-                                labels  = scales::label_number(scale = 1e-9, big.mark = ","), 
+            scale_y_continuous(name = "Difference (R Million)",
+                                labels  = function(x) ifelse(x == 0, "", scales::number(x, scale = 1e-6, big.mark = " ")), 
                                 breaks = scales::pretty_breaks(n = 6), 
-                                expand = 0.15, 
-                                sec.axis = sec_axis(~ to_secondary_pct(.), 
-                                            name = "% of Original Budget", 
-                                            breaks = seq(90, 110, by = 5))
+                                expand = expansion(mult = c(0, 0.11)),
+                                sec.axis = sec_axis(~ (. - pct_offset) / pct_scale, 
+                                            name = "% of Adjusted Budget", 
+                                            breaks = seq(0, 100, by = 20), 
+                                        labels  = function(x) ifelse(x == 0, "", x)), 
                                             ) + 
             scale_x_continuous(name = "Financial Year", 
-                breaks =  c(2018:2026),
-                labels = function(x) paste0(x-1, "/", stringr::str_sub(x, start = 3, end = 4)), 
+                breaks =  2021:2025,
+                labels = function(x) paste0(as.integer(x)-1, "/", stringr::str_sub(x, start = 3, end = 4)), 
                 expand = 0.05) + 
-            labs(title = "Difference between Audited Budget Revenue and Original Budget Revenue,\n2021/22 - 2024/25",
-                    caption = "substack.com/@onderstromings\n \nSource: National Treasury\nNote: Municipalities with missing audits removed.") +
+            labs(title = "Difference between Adjusted Conditional Grants Budgets and\nReported Spending, 2021/22 - 2024/25",
+                    caption = "substack.com/@onderstromings\n \nSource: National Treasury\nNote: Municipalities reporting zero expenditure were removed.") +
             substack_theme +
             theme(legend.position = "none", 
                     panel.grid.major.x  = element_blank()
             )
+
 year_cols
 
 year_cols_path <- paste0(output_dir, "/year_cols.png")
@@ -859,8 +915,81 @@ dev.off()
 
 
 ####
-## Seperate post with an interactive map
+## Difference between original and adjusted amounts (remember to exclude LSEG) by revenue group
 ####
+
+col_rev_df <- grants_df %>%
+        dplyr::select(demarcation.code, period, amount_ORGB, amount_ADJB, amount_ACT, label, revenue_group) %>%
+        dplyr::filter(label %in% c("total_grants", "Local Government Equitable Share", "Municipal Infrastructure Grant", "Urban Settlement Development Grant")) %>%
+        tidyr::pivot_wider(id_cols = c(demarcation.code, period, revenue_group), 
+                        names_from = label, 
+                        values_from = c(amount_ORGB, amount_ADJB, amount_ACT)) %>%
+        dplyr::mutate(ORGB_infrastructure = pmax(`amount_ORGB_Municipal Infrastructure Grant`, `amount_ORGB_Urban Settlement Development Grant`), 
+                        ADJB_infrastructure = pmax(`amount_ADJB_Municipal Infrastructure Grant`, `amount_ADJB_Urban Settlement Development Grant`), 
+                        ACT_infrastructure = pmax(`amount_ACT_Municipal Infrastructure Grant`, `amount_ACT_Urban Settlement Development Grant`),
+                        ORGB_conditional = amount_ORGB_total_grants - `amount_ORGB_Local Government Equitable Share`, 
+                        ADJB_conditional = amount_ADJB_total_grants - `amount_ADJB_Local Government Equitable Share`, 
+                        ACT_conditional = amount_ACT_total_grants - `amount_ACT_Local Government Equitable Share`,
+                        difference = ADJB_conditional - ADJB_conditional, 
+                        difference_ACT = ifelse(dplyr::if_all(c("ACT_conditional", "ADJB_conditional"), ~.x > 0), ADJB_conditional - ACT_conditional, NA_integer_ ), 
+                        difference_infrastructure = ifelse(dplyr::if_all(c("ADJB_infrastructure", "ORGB_infrastructure"), ~.x > 0), ORGB_infrastructure - ADJB_infrastructure, NA_integer_), 
+                        difference_infrastructure_act = ifelse(dplyr::if_all(c("ACT_infrastructure", "ADJB_infrastructure"), ~.x > 0), ADJB_infrastructure - ACT_infrastructure, NA_integer_)) %>%
+        dplyr::group_by(revenue_group) %>%
+        dplyr::summarise(dplyr::across(dplyr::matches("difference|ORGB_conditional|difference_infrastructure|ADJB|adjb|ORGB_infrastructure|ACT|act"), ~sum(.x, na.rm = TRUE)), .groups = "drop") %>%
+        dplyr::mutate(pct = ADJB_conditional / ORGB_conditional * 100, 
+                        pct_act = ACT_conditional / ADJB_conditional * 100, 
+                        pct_infrastructure = ADJB_infrastructure / ORGB_infrastructure * 100, 
+                        pct_infrastructure_act = ACT_infrastructure / ADJB_infrastructure * 100)
+
+year_cols_rev <- ggplot() +
+            geom_col(data = col_rev_df, aes(x = revenue_group, y = pct_act, fill = difference_ACT > 0)) +
+            scale_fill_manual(values = c("TRUE" = "#5C8A5A",  "FALSE" = "#8C5E58")) +
+            scale_y_continuous(name = "% of Adjusted Budget",
+                                labels  = function(x) ifelse(x == 0, "", scales::percent(x / 100)), 
+                                breaks = scales::pretty_breaks(n = 6), 
+                                limits = c(0, 100), 
+                                expand = c(0, 0)) + 
+            scale_x_discrete(name = "MIIF Category", 
+                expand = 0.05) + 
+            labs(title = "Difference between Adjusted Conditional Grants Budgets and\nReported Spending by MIIF Categories, 2021/22 - 2024/25",
+                    caption = "substack.com/@onderstromings\n \nSource: National Treasury\nNote: Municipalities reporting zero expenditure were removed.") +
+            substack_theme +
+            theme(legend.position = "none", 
+                    panel.grid.major.x  = element_blank()
+                    )
+
+year_cols_rev
+
+year_cols_path <- paste0(output_dir, "/year_cols.png")
+
+png(filename = year_cols_path,
+        width = 1100,
+        height = 650,
+        res = 110)
+
+print(year_cols)
+
+dev.off()
+
+
+
+####
+## hh to receipt scatter
+####
+
+scatter2_df <- grants_df %>%
+        dplyr::filter(label == "Local Government Equitable Share") %>%
+        dplyr::select(demarcation.code, amount_ADJB, hh_pov) %>%
+        dplyr::group_by(demarcation.code) %>%
+        dplyr::summarise(hh_pov = mean(hh_pov, na.rm = TRUE), amount = sum(amount_ADJB)) 
+
+
+ggplot(data = scatter2_df, aes(x = log(hh_pov), y = log(amount))) +
+  geom_point() 
+  
+  +
+  scale_fill_gradient(low = "white", high = "red") +
+  coord_fixed()
 
 
 
