@@ -531,7 +531,7 @@ rev_df <- temp_rev %>%
 
 grants_df <- dplyr::bind_rows(df_grants %>% dplyr::rename(label = grant.label) %>% dplyr::mutate(period = as.character(period)), rev_df) %>%
                 dplyr::filter(as.numeric(period) >= 2021) %>%
-                dplyr::left_join(munic_list %>% dplyr::select(demarcation.code, demarcation.label, municipality.miif_category, district.miif_category, hh_n, hh_socio), by = "demarcation.code") %>%
+                dplyr::left_join(dplyr::left_join(munic_list %>% dplyr::select(demarcation.code, demarcation.label, municipality.miif_category, district.miif_category, hh_n, hh_socio), by = "demarcation.code"), df_cpi %>% dplyr::mutate(period = as.character(period)), by = "period")  %>%
                 dplyr::mutate(revenue_group = case_when(municipality.miif_category == "A" ~ "A",
                                         municipality.miif_category == "B1" ~ "B1",
                                         municipality.miif_category == "B2" & district.miif_category == "C1" ~ "B2/C1",
@@ -557,9 +557,13 @@ utils::write.csv(grants_df, here::here("data", "grants_df.csv"))
 
 grants_df <- readr::read_csv(here::here("data", "grants_df.csv"))
 
+print(67895600000 / 104236806000)
+
+print( (4515194000 +10530141000) / (119036925000 - 80346307000))
+
 bar_df <- grants_df %>%
         dplyr::mutate(period = as.character(period)) %>%
-        dplyr::filter(!(label %in% c("total_revenue_excluding_capital_transfers_and_contributions", "total_transfers", "share", departments, "total_grants", "total_revenue"))) %>%
+        dplyr::filter(!(label %in% c("total_revenue_excluding_capital_transfers_and_contributions", "total_transfers", "share", "total_grants", departments, "total_revenue"))) %>%
         dplyr::select(period, amount_ADJB, label) %>%
         dplyr::group_by(period, label) %>%
         dplyr::summarise(amount_ADJB = sum(amount_ADJB, na.rm = TRUE)) %>%
@@ -670,9 +674,13 @@ dumbbell_df <- grants_df %>%
         dplyr::filter(total_revenue > total_grants &  total_revenue > `Local Government Equitable Share` & dplyr::if_all(c(total_grants, total_revenue, `Local Government Equitable Share`), ~ !is.na(.x) & .x > 0)) %>%
         dplyr::mutate(share_total = total_grants / total_revenue, 
                         share_lges = `Local Government Equitable Share` / total_revenue) %>%
+        
+        dplyr::filter(period %in% c("2021", "2025")) %>%
+        dplyr::group_by(demarcation.code) %>%
+        dplyr::filter(all(c("2021", "2025") %in% period[!is.na(share_total) & !is.na(share_lges)])) %>%
+        dplyr::ungroup() %>%
         dplyr::group_by(revenue_group, period) %>%
         dplyr::summarise(dplyr::across(c(share_total, share_lges),  ~mean(.x, na.rm = TRUE))) %>%
-        dplyr::filter(period %in% c("2021", "2025")) %>%
         tidyr::pivot_wider(id_cols = revenue_group, 
                                 names_from = period, 
                                 values_from = c(share_total, share_lges),
@@ -692,10 +700,10 @@ dumbbell_plot <-  ggplot() +
                             size = 3, show.legend = FALSE) +           
                 scale_colour_manual(values = c("TRUE" = "#8C5E58", "FALSE" = "#2E4B3C")) +
                 scale_shape_manual(name = NULL, values = setNames(c(1, 16), c("2020/21", "2024/25"))) +
-                labs(title = "Change in Share of Revenue from Grants by Revenue\nGroup, 2020/21 - 2024/25",
+                labs(title = "Share of Revenue from Grants by Municipality\nGroup, 2020/21 - 2024/25",
                         x = "Share of Total Revenue", 
                         y = "MIIF Category",
-                        caption = "substack.com/@onderstromings\n \nSource: National Tresury") +
+                        caption = "substack.com/@onderstromings\n \nSource: National Treasury") +
                 scale_x_continuous(limits = c(0, 1),
                                 labels = scales::label_percent(), 
                                 expand = c(0, 0)) +
@@ -731,6 +739,66 @@ png(filename = dumbbell_path,
 print(dumbbell_plot)
 dev.off()
 
+dumbbell_lges_plot <- ggplot() +
+  geom_segment(data = dumbbell_df,
+               mapping = aes(x = share_lges_2021, xend = share_lges_2025,
+                             y = revenue_group, yend = revenue_group,
+                             colour = change_lges > 0),
+               size = 2) +
+  geom_point(data = dumbbell_df,
+             aes(x = share_lges_2021, y = revenue_group,
+                 colour = change_lges > 0, shape = "2020/21"),
+             size = 4) +
+  geom_point(data = dumbbell_df,
+             aes(x = share_lges_2025, y = revenue_group,
+                 colour = change_lges > 0, shape = "2024/25"),
+             size = 4) +
+  geom_text(data = dumbbell_df,
+            aes(x = share_lges_2025, y = revenue_group,
+                label = scales::percent(share_lges_2025, accuracy = 0.1),
+                colour = change_lges > 0,
+                vjust = ifelse(change_lges > 0, -1.5, 1.5)),
+            size = 3, show.legend = FALSE) +
+  geom_text(data = dumbbell_df,
+            aes(x = share_lges_2021, y = revenue_group,
+                label = scales::percent(share_lges_2021, accuracy = 0.1),
+                colour = change_lges > 0,
+                vjust = ifelse(change_lges > 0, 0.75, -0.75)),
+            size = 3, show.legend = FALSE) +
+  scale_colour_manual(values = c("TRUE" = "#8C5E58", "FALSE" = "#2E4B3C")) +
+  scale_shape_manual(name = NULL,
+                     values = setNames(c(1, 16), c("2020/21", "2024/25"))) +
+  labs(title = "Share of Revenue from the Local Government Equitable Share\nby Municipality Group, 2020/21 - 2024/25",
+       x = "Share of Total Revenue",
+       y = "MIIF Category",
+       caption = "substack.com/@onderstromings\n \nSource: National Treasury") +
+  scale_x_continuous(limits = c(0, 1),
+                     labels = scales::label_percent(),
+                     expand = c(0, 0)) +
+  scale_y_discrete(expand = expansion(mult = c(0.14, 0.14))) +
+  guides(shape = guide_legend(override.aes = list(colour = "black")),
+         colour = "none") +
+  substack_theme +
+  theme(
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    text        = element_text(colour = "#1F2A24"),
+    axis.text   = element_text(colour = "#4A4460"),
+    axis.text.x = element_text(colour = "#4A4460", angle = 45, hjust = 1, vjust = 1),
+    legend.position = "bottom",
+    legend.key.size = unit(0.45, "cm"),
+    plot.margin = margin(12, 16, 8, 12),
+    plot.title  = element_text(colour = "#1F2A24", face = "plain", size = rel(1),
+                               margin = margin(b = 4), hjust = 0.5)
+  )
+
+dumbbell_lges_plot
+
+dumbbell_lges_path <- paste0(output_dir, "/dumbbell_lges_plot.png")
+
+png(filename = dumbbell_lges_path, width = 1150, height = 650, res = 130)
+print(dumbbell_lges_plot)
+dev.off()
 ##mention that the pattern exists across LGESG as well
 
 ####
@@ -853,6 +921,7 @@ col_df <- grants_df %>%
                         ACT_infrastructure = ifelse(revenue_group != "A",`amount_ACT_Municipal Infrastructure Grant`, `amount_ACT_Urban Settlement Development Grant`),
                         ORGB_conditional = amount_ORGB_total_grants - `amount_ORGB_Local Government Equitable Share`, 
                         ADJB_conditional = amount_ADJB_total_grants - `amount_ADJB_Local Government Equitable Share`, 
+                        ADJB_conditional_A = ifelse(revenue_group == "A", `amount_ADJB_Municipal Infrastructure Grant` + `amount_ADJB_Urban Settlement Development Grant`, 0), 
                         ACT_conditional = amount_ACT_total_grants - `amount_ACT_Local Government Equitable Share`,
                         difference = ADJB_conditional - ADJB_conditional, 
                         difference_ACT = ifelse(dplyr::if_all(c("ACT_conditional", "ADJB_conditional"), ~.x > 0), ADJB_conditional - ACT_conditional, NA_integer_ ), 
@@ -861,7 +930,7 @@ col_df <- grants_df %>%
         dplyr::group_by(period) %>%
         dplyr::summarise(dplyr::across(dplyr::matches("difference|ORGB_conditional|difference_infrastructure|ADJB|adjb|ORGB_infrastructure|ACT|act"), ~sum(.x, na.rm = TRUE)), .groups = "drop") %>%
         dplyr::mutate(pct = ADJB_conditional / ORGB_conditional * 100, 
-                        pct_act = ACT_conditional / ADJB_conditional * 100, 
+                        pct_act = ACT_conditional / (ADJB_conditional - ADJB_conditional_A) * 100, 
                         pct_infrastructure = ADJB_infrastructure / ORGB_infrastructure * 100, 
                         pct_infrastructure_act = ACT_infrastructure / ADJB_infrastructure * 100, 
                         period = as.numeric(period))
@@ -894,7 +963,7 @@ year_cols <- ggplot() +
                 labels = function(x) paste0(as.integer(x)-1, "/", stringr::str_sub(x, start = 3, end = 4)), 
                 expand = 0.05) + 
             labs(title = "Difference between Adjusted Conditional Grants Budgets and\nReported Spending, 2021/22 - 2024/25",
-                    caption = "substack.com/@onderstromings\n \nSource: National Treasury\nNote: Municipalities reporting zero expenditure were removed.") +
+                    caption = "substack.com/@onderstromings\n \nSource: National Treasury\nNote: Municipalities reporting zero expenditure were removed.\n       Urban Settlement Development Grants expenditure are not available.") +
             substack_theme +
             theme(legend.position = "none", 
                     panel.grid.major.x  = element_blank()
@@ -929,19 +998,21 @@ col_rev_df <- grants_df %>%
                         ACT_infrastructure = pmax(`amount_ACT_Municipal Infrastructure Grant`, `amount_ACT_Urban Settlement Development Grant`),
                         ORGB_conditional = amount_ORGB_total_grants - `amount_ORGB_Local Government Equitable Share`, 
                         ADJB_conditional = amount_ADJB_total_grants - `amount_ADJB_Local Government Equitable Share`, 
+                        ADJB_conditional_A = ifelse(revenue_group == "A", `amount_ADJB_Municipal Infrastructure Grant` + `amount_ADJB_Urban Settlement Development Grant`, 0), 
                         ACT_conditional = amount_ACT_total_grants - `amount_ACT_Local Government Equitable Share`,
                         difference = ADJB_conditional - ADJB_conditional, 
                         difference_ACT = ifelse(dplyr::if_all(c("ACT_conditional", "ADJB_conditional"), ~.x > 0), ADJB_conditional - ACT_conditional, NA_integer_ ), 
                         difference_infrastructure = ifelse(dplyr::if_all(c("ADJB_infrastructure", "ORGB_infrastructure"), ~.x > 0), ORGB_infrastructure - ADJB_infrastructure, NA_integer_), 
                         difference_infrastructure_act = ifelse(dplyr::if_all(c("ACT_infrastructure", "ADJB_infrastructure"), ~.x > 0), ADJB_infrastructure - ACT_infrastructure, NA_integer_)) %>%
         dplyr::group_by(revenue_group) %>%
-        dplyr::summarise(dplyr::across(dplyr::matches("difference|ORGB_conditional|difference_infrastructure|ADJB|adjb|ORGB_infrastructure|ACT|act"), ~sum(.x, na.rm = TRUE)), .groups = "drop") %>%
+        dplyr::summarise(dplyr::across(dplyr::matches("amount_ADJB_Municipal Infrastructure Grant|difference|ORGB_conditional|amount_ADJB_Urban Settlement Development Grant|difference_infrastructure|ADJB|adjb|ORGB_infrastructure|ACT|act"), ~sum(.x, na.rm = TRUE)), .groups = "drop") %>%
         dplyr::mutate(pct = ADJB_conditional / ORGB_conditional * 100, 
-                        pct_act = ACT_conditional / ADJB_conditional * 100, 
+                        pct_act = ifelse(revenue_group == "A", ACT_conditional / (ADJB_conditional - `amount_ADJB_Urban Settlement Development Grant` - `amount_ADJB_Municipal Infrastructure Grant`) * 100, 
+                        ACT_conditional / ADJB_conditional * 100), 
                         pct_infrastructure = ADJB_infrastructure / ORGB_infrastructure * 100, 
                         pct_infrastructure_act = ACT_infrastructure / ADJB_infrastructure * 100)
 
-year_cols_rev <- ggplot() +
+rev_cols <- ggplot() +
             geom_col(data = col_rev_df, aes(x = revenue_group, y = pct_act, fill = difference_ACT > 0)) +
             scale_fill_manual(values = c("TRUE" = "#5C8A5A",  "FALSE" = "#8C5E58")) +
             scale_y_continuous(name = "% of Adjusted Budget",
@@ -952,25 +1023,24 @@ year_cols_rev <- ggplot() +
             scale_x_discrete(name = "MIIF Category", 
                 expand = 0.05) + 
             labs(title = "Difference between Adjusted Conditional Grants Budgets and\nReported Spending by MIIF Category, 2021/22 - 2024/25",
-                    caption = "substack.com/@onderstromings\n \nSource: National Treasury\nNote: Municipalities reporting zero expenditure were removed.") +
+                    caption = "substack.com/@onderstromings\n \nSource: National Treasury\nNote: Municipalities reporting zero expenditure were removed.\n       Urban Settlement Development Grants expenditure are not available.") +
             substack_theme +
             theme(legend.position = "none", 
                     panel.grid.major.x  = element_blank()
                     )
 
-year_cols_rev
 
-year_cols_path <- paste0(output_dir, "/year_cols.png")
 
-png(filename = year_cols_path,
+rev_cols_path <- paste0(output_dir, "/rev_cols.png")
+
+png(filename = rev_cols_path,
         width = 1100,
         height = 650,
         res = 110)
 
-print(year_cols)
+print(rev_cols)
 
 dev.off()
-
 
 
 ####
